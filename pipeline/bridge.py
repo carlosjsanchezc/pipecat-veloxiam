@@ -85,6 +85,17 @@ def _latest_user_text(context: LLMContext) -> Optional[str]:
     return None
 
 
+import re as _re
+
+_PLACEHOLDER_RE = _re.compile(r"//[^/]+//")
+
+
+def _clean_tts_text(text: str) -> Optional[str]:
+    """Elimina placeholders tipo //logo// que no deben sintetizarse."""
+    cleaned = _PLACEHOLDER_RE.sub("", text).strip()
+    return cleaned or None
+
+
 class NestJSAgentProcessor(FrameProcessor):
     """Hace de "LLM": al cerrarse el turno del usuario consulta a NestJS y
     emite la respuesta como texto hacia el TTS.
@@ -176,8 +187,9 @@ class NestJSAgentProcessor(FrameProcessor):
         data = resp.json()
         # Aceptamos varias formas habituales de respuesta.
         if isinstance(data, str):
-            return data
-        return data.get("text") or data.get("reply") or data.get("message")
+            return _clean_tts_text(data)
+        raw = data.get("text") or data.get("reply") or data.get("message")
+        return _clean_tts_text(raw) if raw else None
 
     async def _cancel_pending(self):
         if self._pending is not None:

@@ -18,7 +18,7 @@ def create_vad_analyzer() -> SileroVADAnalyzer:
         params=VADParams(
             confidence=0.7,   # umbral de confianza para considerar "voz"
             start_secs=0.2,   # voz sostenida antes de marcar "empezó a hablar"
-            stop_secs=0.6,    # silencio antes de cerrar el turno (algo holgado para es)
+            stop_secs=0.2,    # valor recomendado por pipecat para turn detection
             min_volume=0.6,
         )
     )
