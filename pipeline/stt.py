@@ -1,6 +1,7 @@
 """STT con Deepgram en streaming (tiempo real).
 
-- ``create_stt()`` devuelve el servicio Deepgram configurado en español con
+- ``create_stt(cfg)`` devuelve el servicio Deepgram configurado con el idioma
+  del bot y con
   resultados intermedios (interim) activados, de modo que emite transcripción
   parcial "palabra por palabra" además de la final.
 - ``TranscriptionTap`` es un FrameProcessor que se coloca justo después del STT
@@ -23,16 +24,18 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.deepgram.stt import DeepgramSTTService
-from pipecat.transcriptions.language import Language
+
+from pipeline.config import BotConfig
+from pipeline.lang import to_language
 
 
-def create_stt() -> DeepgramSTTService:
-    """Crea el servicio Deepgram STT en streaming, en español."""
+def create_stt(cfg: BotConfig) -> DeepgramSTTService:
+    """Crea el servicio Deepgram STT en streaming, con el idioma/modelo del bot."""
     return DeepgramSTTService(
         api_key=os.environ["DEEPGRAM_API_KEY"],
         settings=DeepgramSTTService.Settings(
-            model=os.getenv("DEEPGRAM_MODEL", "nova-2-general"),
-            language=Language.ES,
+            model=cfg.deepgram_model,
+            language=to_language(cfg.language),
             interim_results=True,  # transcripción parcial, palabra por palabra
             smart_format=True,
             punctuate=True,

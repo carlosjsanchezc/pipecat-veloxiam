@@ -1,10 +1,8 @@
-"""Bridge WebRTC <-> pipeline STT -> agente NestJS -> TTS.
+"""Bridge WebRTC <-> pipeline STT -> agente Veloxiam -> TTS.
 
-Pipecat 1.3.0 trae el transporte WhatsApp (``pipecat.transports.whatsapp``) que
-ya resuelve el webhook de Meta y el intercambio SDP offer/answer contra la Graph
-API. Cuando una llamada se conecta, el ``WhatsAppClient`` nos entrega una
-``SmallWebRTCConnection`` ya negociada. Este módulo construye y ejecuta el
-pipeline Pipecat sobre esa conexión.
+Veloxiam negocia la llamada con Meta y pasa el SDP offer a /call/start; main.py
+crea la ``SmallWebRTCConnection`` y la entrega aquí. Este módulo construye y
+ejecuta el pipeline Pipecat sobre esa conexión.
 
 Orden del pipeline::
 
@@ -12,14 +10,14 @@ Orden del pipeline::
       -> stt               Deepgram -> TranscriptionFrame
       -> TranscriptionTap  registra texto + confidence
       -> user_aggregator   VAD (barge-in) + cierre de turno -> LLMContextFrame
-      -> NestJSAgentProcessor   POST a NestJS, devuelve texto -> LLMTextFrame
-      -> tts               Cartesia -> audio
+      -> NestJSAgentProcessor   POST a llm-response, devuelve texto -> LLMTextFrame
+      -> tts               Cartesia (voiceId del bot) -> audio
       -> transport.output()     audio saliente a Meta
       -> assistant_aggregator   registra la respuesta en el contexto
 
 El barge-in lo gestiona el framework: el VAD del ``user_aggregator`` emite
 ``InterruptionFrame`` cuando el usuario habla encima del bot; el TTS corta el
-audio y este procesador cancela cualquier petición a NestJS en vuelo.
+audio y este procesador cancela cualquier petición a Veloxiam en vuelo.
 """
 
 import os
@@ -49,6 +47,7 @@ from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
+from pipeline.config import BotConfig
 from pipeline.stt import TranscriptionTap, create_stt
 from pipeline.tts import create_tts
 from pipeline.vad import create_vad_analyzer
@@ -88,17 +87,17 @@ class NestJSAgentProcessor(FrameProcessor):
     """Hace de "LLM": al cerrarse el turno del usuario consulta a NestJS y
     emite la respuesta como texto hacia el TTS.
 
-    Flujo síncrono: ``POST {NESTJS_AGENT_URL}/{botId}/message`` -> texto.
+    Flujo síncrono: ``POST {LLM_RESPONSE_URL}`` con header ``x-bot-id`` -> texto.
     La llamada se ejecuta como tarea para no bloquear el pipeline (así puede
     procesar un ``InterruptionFrame`` si el usuario interrumpe mientras esperamos
     la respuesta); en ese caso la tarea se cancela y no se habla nada obsoleto.
     """
 
-    def __init__(self, *, session, http: httpx.AsyncClient, nestjs_url: str, **kwargs):
+    def __init__(self, *, session, http: httpx.AsyncClient, llm_url: str, **kwargs):
         super().__init__(**kwargs)
         self._session = session
         self._http = http
-        self._nestjs_url = nestjs_url.rstrip("/")
+        self._llm_url = llm_url  # URL fija del endpoint LLM de Veloxiam
         self._pending = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -148,7 +147,7 @@ class NestJSAgentProcessor(FrameProcessor):
         await self.push_frame(LLMFullResponseEndFrame())
 
     async def _call_nestjs(self, user_text: str) -> Optional[str]:
-        url = f"{self._nestjs_url}/{self._session.bot_id}/message"
+        # El bot se identifica por header x-bot-id (no en la URL).
         payload = {
             "sessionId": self._session.id,
             "callId": self._session.call_id,
@@ -156,7 +155,12 @@ class NestJSAgentProcessor(FrameProcessor):
             "from": self._session.phone_number,
             "text": user_text,
         }
-        resp = await self._http.post(url, json=payload, timeout=20.0)
+        resp = await self._http.post(
+            self._llm_url,
+            json=payload,
+            headers={"x-bot-id": self._session.bot_id},
+            timeout=20.0,
+        )
         resp.raise_for_status()
         data = resp.json()
         # Aceptamos varias formas habituales de respuesta.
@@ -174,16 +178,18 @@ async def run_call(
     connection: SmallWebRTCConnection,
     session,
     http: httpx.AsyncClient,
+    cfg: BotConfig,
 ):
-    """Construye y ejecuta el pipeline para una llamada conectada.
+    """Construye y ejecuta el pipeline para una llamada conectada, usando la
+    voz/idioma/modelo del bot resuelto (``cfg``).
 
     Bloquea hasta que la llamada termina (desconexión o cancelación). Pensada
     para lanzarse como tarea de fondo desde el callback del webhook.
     """
-    nestjs_url = os.environ["NESTJS_AGENT_URL"]
+    llm_url = os.environ["LLM_RESPONSE_URL"]
 
-    stt = create_stt()
-    tts = create_tts()
+    stt = create_stt(cfg)
+    tts = create_tts(cfg)
     vad = create_vad_analyzer()
 
     transport = SmallWebRTCTransport(
@@ -200,7 +206,7 @@ async def run_call(
         user_params=LLMUserAggregatorParams(vad_analyzer=vad),
     )
 
-    agent = NestJSAgentProcessor(session=session, http=http, nestjs_url=nestjs_url)
+    agent = NestJSAgentProcessor(session=session, http=http, llm_url=llm_url)
 
     pipeline = Pipeline(
         [
@@ -218,7 +224,7 @@ async def run_call(
     worker = PipelineWorker(pipeline, params=PipelineParams(enable_metrics=False))
     session.worker = worker
 
-    greeting = os.getenv("GREETING_TEXT", "").strip()
+    greeting = (cfg.greeting or "").strip()
 
     @transport.event_handler("on_client_connected")
     async def _on_connected(_transport, _client):

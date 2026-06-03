@@ -1,18 +1,17 @@
-# Pipecat con los extras necesarios para este pipeline.
+# Pipecat con los extras necesarios para este pipeline de voz.
 # - deepgram  -> STT
 # - cartesia  -> TTS
 # - silero    -> VAD (barge-in)  [trae onnxruntime]
-# - webrtc    -> SmallWebRTC / aiortc (media WebRTC)
-# - whatsapp  -> transporte WhatsApp Cloud Calling (webhook + SDP)
-pipecat-ai[deepgram,cartesia,silero,webrtc,whatsapp]==1.3.0
+# - webrtc    -> SmallWebRTC / aiortc (media WebRTC; SDP offer/answer)
+# Veloxiam maneja WhatsApp/Meta, así que NO usamos el extra [whatsapp].
+pipecat-ai[deepgram,cartesia,silero,webrtc]==1.3.0
 
 fastapi
 uvicorn[standard]
 python-dotenv
-httpx          # llamadas a NestJS
-aiohttp        # requerido por el WhatsAppClient de Pipecat
+httpx          # llamadas a Veloxiam (llm-response / transcript)
 loguru
 
-# NOTA: aiortc (vía [webrtc]) y onnxruntime (vía [silero]) compilan/usan ruedas
-# nativas. A junio de 2026 puede que aún NO existan wheels para Python 3.14.
+# NOTA: aiortc (vía [webrtc]) y onnxruntime (vía [silero]) usan ruedas nativas.
+# A junio de 2026 puede que aún NO existan wheels para Python 3.14.
 # Usa Python 3.12 en el servidor para evitar builds desde fuente.

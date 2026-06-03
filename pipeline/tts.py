@@ -1,32 +1,26 @@
-"""TTS con Cartesia en español.
+"""TTS con Cartesia, con voz e idioma por bot (multi-tenant).
 
-Cartesia produce audio raw PCM que el transporte WebRTC de Pipecat reempaqueta
-y envía a Meta (resampleo/encoding los gestiona el transporte). El barge-in es
-automático: el servicio cancela la síntesis en curso al recibir un
-``InterruptionFrame`` generado por el VAD del agregador de usuario.
+Cartesia produce audio raw PCM que el transporte WebRTC reempaqueta y envía a
+Meta. El barge-in es automático: el servicio cancela la síntesis en curso al
+recibir un ``InterruptionFrame`` generado por el VAD del agregador de usuario.
 """
 
 import os
 
 from pipecat.services.cartesia.tts import CartesiaTTSService
-from pipecat.transcriptions.language import Language
+
+from pipeline.config import BotConfig
+from pipeline.lang import to_language
 
 
-def create_tts() -> CartesiaTTSService:
-    """Crea el servicio Cartesia TTS configurado en español.
-
-    Requiere CARTESIA_VOICE_ID: un voice_id de Cartesia con soporte de español.
-    """
-    voice_id = os.environ.get("CARTESIA_VOICE_ID")
-    if not voice_id:
-        raise RuntimeError(
-            "Falta CARTESIA_VOICE_ID. Elige un voice_id en español del panel de "
-            "Cartesia y ponlo en .env."
-        )
+def create_tts(cfg: BotConfig) -> CartesiaTTSService:
+    """Crea el servicio Cartesia TTS con la voz/idioma/modelo del bot."""
+    if not cfg.voice_id:
+        raise RuntimeError(f"Bot {cfg.bot_id} sin voice_id en su configuración.")
 
     return CartesiaTTSService(
         api_key=os.environ["CARTESIA_API_KEY"],
-        voice_id=voice_id,
-        model=os.getenv("CARTESIA_MODEL", "sonic-2"),
-        params=CartesiaTTSService.InputParams(language=Language.ES),
+        voice_id=cfg.voice_id,
+        model=cfg.cartesia_model,
+        params=CartesiaTTSService.InputParams(language=to_language(cfg.language)),
     )

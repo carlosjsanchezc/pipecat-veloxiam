@@ -48,10 +48,12 @@ class CallSession:
 
 
 class SessionManager:
-    def __init__(self, max_sessions: int, nestjs_url: str, http: httpx.AsyncClient):
+    def __init__(self, max_sessions: int, http: httpx.AsyncClient, transcript_url: str = ""):
         self.max_sessions = max_sessions
-        self._nestjs_url = nestjs_url.rstrip("/")
         self._http = http
+        # Opcional: endpoint para volcar el transcript completo al terminar.
+        # Vacío = no se envía (Veloxiam ya recibe cada turno vía llm-response).
+        self._transcript_url = (transcript_url or "").strip()
         self.sessions: Dict[str, CallSession] = {}  # por call_id
 
     # --- estado ---
@@ -88,15 +90,21 @@ class SessionManager:
         for call_id in list(self.sessions.keys()):
             await self.terminate(call_id)
 
-    # --- envío del transcript a NestJS ---
+    # --- envío del transcript a Veloxiam (opcional) ---
     async def _flush_transcript(self, session: CallSession):
+        if not self._transcript_url:
+            return
         if not session.transcript:
             logger.info(f"Sin transcript que enviar (session={session.id})")
             return
-        url = f"{self._nestjs_url}/{session.bot_id}/transcript"
         try:
-            resp = await self._http.post(url, json=session.to_payload(), timeout=15.0)
+            resp = await self._http.post(
+                self._transcript_url,
+                json=session.to_payload(),
+                headers={"x-bot-id": session.bot_id},
+                timeout=15.0,
+            )
             resp.raise_for_status()
-            logger.info(f"Transcript enviado a NestJS (session={session.id})")
+            logger.info(f"Transcript enviado (session={session.id})")
         except Exception as e:  # noqa: BLE001
             logger.error(f"No se pudo enviar el transcript (session={session.id}): {e}")
