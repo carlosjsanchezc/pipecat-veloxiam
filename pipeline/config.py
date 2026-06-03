@@ -31,5 +31,5 @@ class BotConfig:
                 "deepgramModel", os.getenv("DEEPGRAM_MODEL", "nova-2-general")
             ),
             tenant_id=data.get("tenantId", "default"),
-            greeting=data.get("greeting", ""),
+            greeting=data.get("greeting", "Hola, ¿cómo estás?"),
         )

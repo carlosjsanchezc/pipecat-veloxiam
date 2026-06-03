@@ -16,6 +16,7 @@ Endpoints:
 
 import asyncio
 import os
+import sys
 from contextlib import asynccontextmanager
 
 import httpx
@@ -31,6 +32,25 @@ from pipeline.config import BotConfig
 from session_manager import SessionManager
 
 load_dotenv()
+
+# Nuestro código: INFO+  |  pipecat internals: WARNING+ (evita el flood de DEBUG)
+logger.remove()
+logger.add(
+    sys.stderr,
+    level="DEBUG",
+    filter=lambda r: (
+        r["level"].no >= 30   # WARNING+ para pipecat.*
+        if r["name"].startswith("pipecat.")
+        else r["level"].no >= 20  # INFO+ para pipeline.*, session_manager, __main__
+    ),
+    format=(
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+        "<level>{level:<8}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+        "<level>{message}</level>"
+    ),
+    colorize=True,
+)
 
 REQUIRED_VARS = ["DEEPGRAM_API_KEY", "CARTESIA_API_KEY", "LLM_RESPONSE_URL"]
 
