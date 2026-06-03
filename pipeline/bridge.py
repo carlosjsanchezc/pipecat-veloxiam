@@ -21,6 +21,7 @@ audio y este procesador cancela cualquier petición a Veloxiam en vuelo.
 """
 
 import os
+import time
 from typing import Any, Optional
 
 import httpx
@@ -104,18 +105,15 @@ class NestJSAgentProcessor(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
-        logger.debug(f"[agent] frame={type(frame).__name__} dir={direction.name}")
-
         # Barge-in / interrupción: cancela la petición en vuelo a NestJS.
         if isinstance(frame, InterruptionFrame):
-            logger.info(f"[agent] Barge-in detectado — cancelando petición en vuelo")
+            logger.info(f"[agent] ⚡ Barge-in — cancelando petición en vuelo")
             await self._cancel_pending()
             await self.push_frame(frame, direction)
             return
 
         # Fin de turno del usuario: el agregador empuja el contexto.
         if isinstance(frame, LLMContextFrame) and direction == FrameDirection.DOWNSTREAM:
-            logger.info(f"[agent] LLMContextFrame recibido — iniciando turno de usuario")
             await self._on_user_turn(frame.context)
             return  # consumimos el frame; nosotros generamos la respuesta
 
@@ -127,33 +125,37 @@ class NestJSAgentProcessor(FrameProcessor):
             return
         confidence = getattr(self._session, "last_user_confidence", None)
         self._session.add_turn("user", user_text, confidence)
-        logger.info(f"[turno usuario] {user_text!r} (conf={confidence})")
+        conf_pct = f"{confidence * 100:.0f}%" if confidence is not None else "?"
+        logger.info(f"[STT→usuario] {user_text!r}  conf={conf_pct}")
 
         await self._cancel_pending()
         self._pending = self.create_task(self._respond(user_text))
 
     async def _respond(self, user_text: str):
-        logger.info(f"[agent] Llamando a NestJS — url={self._llm_url}")
+        t0 = time.perf_counter()
         try:
             reply = await self._call_nestjs(user_text)
-            logger.info(f"[agent] NestJS respondió: {reply!r}")
+            llm_ms = (time.perf_counter() - t0) * 1000
+            logger.info(f"[NestJS] {llm_ms:.0f}ms → {reply!r}")
         except Exception as e:  # noqa: BLE001 - queremos seguir hablando aunque falle
-            logger.exception(f"[agent] NestJS falló: {e}")
+            llm_ms = (time.perf_counter() - t0) * 1000
+            logger.exception(f"[NestJS] {llm_ms:.0f}ms → ERROR: {e}")
             reply = "Lo siento, tuve un problema. ¿Puedes repetirlo?"
 
         if not reply:
-            logger.warning(f"[agent] NestJS devolvió respuesta vacía — no se habla")
+            logger.warning(f"[NestJS] Respuesta vacía — no se habla")
             return
 
         self._session.add_turn("assistant", reply, None)
-        logger.info(f"[turno agente] {reply!r}")
 
         # Enmarcamos como respuesta de LLM para que el TTS la sintetice y el
         # assistant_aggregator la registre en el contexto.
-        logger.debug(f"[agent] Enviando frames TTS al pipeline")
+        t1 = time.perf_counter()
         await self.push_frame(LLMFullResponseStartFrame())
         await self.push_frame(LLMTextFrame(reply))
         await self.push_frame(LLMFullResponseEndFrame())
+        tts_queue_ms = (time.perf_counter() - t1) * 1000
+        logger.info(f"[TTS] encolado en {tts_queue_ms:.0f}ms")
 
     async def _call_nestjs(self, user_text: str) -> Optional[str]:
         # El bot se identifica por header x-bot-id (no en la URL).
@@ -205,7 +207,7 @@ async def run_call(
     stt = create_stt(cfg)
     tts = create_tts(cfg)
     vad = create_vad_analyzer()
-    logger.debug(f"[run_call] STT/TTS/VAD creados — session={session.id}")
+    logger.info(f"[run_call] STT/TTS/VAD creados — session={session.id}")
 
     transport = SmallWebRTCTransport(
         webrtc_connection=connection,
@@ -235,7 +237,7 @@ async def run_call(
             assistant_aggregator,
         ]
     )
-    logger.debug(f"[run_call] Pipeline construido — session={session.id}")
+    logger.info(f"[run_call] Pipeline construido — session={session.id}")
 
     worker = PipelineWorker(pipeline, params=PipelineParams(enable_metrics=False))
     session.worker = worker
