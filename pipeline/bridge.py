@@ -20,6 +20,7 @@ El barge-in lo gestiona el framework: el VAD del ``user_aggregator`` emite
 audio y este procesador cancela cualquier petición a Veloxiam en vuelo.
 """
 
+import asyncio
 import os
 import time
 from typing import Any, Optional
