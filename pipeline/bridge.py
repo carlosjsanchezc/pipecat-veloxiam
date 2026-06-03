@@ -104,14 +104,18 @@ class NestJSAgentProcessor(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
+        logger.debug(f"[agent] frame={type(frame).__name__} dir={direction.name}")
+
         # Barge-in / interrupción: cancela la petición en vuelo a NestJS.
         if isinstance(frame, InterruptionFrame):
+            logger.info(f"[agent] Barge-in detectado — cancelando petición en vuelo")
             await self._cancel_pending()
             await self.push_frame(frame, direction)
             return
 
         # Fin de turno del usuario: el agregador empuja el contexto.
         if isinstance(frame, LLMContextFrame) and direction == FrameDirection.DOWNSTREAM:
+            logger.info(f"[agent] LLMContextFrame recibido — iniciando turno de usuario")
             await self._on_user_turn(frame.context)
             return  # consumimos el frame; nosotros generamos la respuesta
 
@@ -129,13 +133,16 @@ class NestJSAgentProcessor(FrameProcessor):
         self._pending = self.create_task(self._respond(user_text))
 
     async def _respond(self, user_text: str):
+        logger.info(f"[agent] Llamando a NestJS — url={self._llm_url}")
         try:
             reply = await self._call_nestjs(user_text)
+            logger.info(f"[agent] NestJS respondió: {reply!r}")
         except Exception as e:  # noqa: BLE001 - queremos seguir hablando aunque falle
-            logger.error(f"NestJS falló: {e}")
+            logger.exception(f"[agent] NestJS falló: {e}")
             reply = "Lo siento, tuve un problema. ¿Puedes repetirlo?"
 
         if not reply:
+            logger.warning(f"[agent] NestJS devolvió respuesta vacía — no se habla")
             return
 
         self._session.add_turn("assistant", reply, None)
@@ -143,6 +150,7 @@ class NestJSAgentProcessor(FrameProcessor):
 
         # Enmarcamos como respuesta de LLM para que el TTS la sintetice y el
         # assistant_aggregator la registre en el contexto.
+        logger.debug(f"[agent] Enviando frames TTS al pipeline")
         await self.push_frame(LLMFullResponseStartFrame())
         await self.push_frame(LLMTextFrame(reply))
         await self.push_frame(LLMFullResponseEndFrame())
@@ -188,10 +196,16 @@ async def run_call(
     para lanzarse como tarea de fondo desde el callback del webhook.
     """
     llm_url = os.environ["LLM_RESPONSE_URL"]
+    logger.info(
+        f"[run_call] Construyendo pipeline — session={session.id} "
+        f"stt_model={cfg.deepgram_model} tts_model={cfg.cartesia_model} "
+        f"voice={cfg.voice_id} lang={cfg.language} llm_url={llm_url}"
+    )
 
     stt = create_stt(cfg)
     tts = create_tts(cfg)
     vad = create_vad_analyzer()
+    logger.debug(f"[run_call] STT/TTS/VAD creados — session={session.id}")
 
     transport = SmallWebRTCTransport(
         webrtc_connection=connection,
@@ -221,26 +235,35 @@ async def run_call(
             assistant_aggregator,
         ]
     )
+    logger.debug(f"[run_call] Pipeline construido — session={session.id}")
 
     worker = PipelineWorker(pipeline, params=PipelineParams(enable_metrics=False))
     session.worker = worker
 
     greeting = (cfg.greeting or "").strip()
+    if greeting:
+        logger.info(f"[run_call] Saludo configurado: {greeting!r} — session={session.id}")
+    else:
+        logger.info(f"[run_call] Sin saludo inicial — session={session.id}")
 
     @transport.event_handler("on_client_connected")
     async def _on_connected(_transport, _client):
-        logger.info(f"Llamada conectada (session={session.id})")
+        logger.info(f"[WebRTC] Cliente conectado — session={session.id}")
         if greeting:
+            logger.info(f"[WebRTC] Encolando saludo TTS: {greeting!r}")
             session.add_turn("assistant", greeting, None)
             await worker.queue_frame(TTSSpeakFrame(greeting))
+        else:
+            logger.info(f"[WebRTC] Sin saludo; esperando que el usuario hable — session={session.id}")
 
     @transport.event_handler("on_client_disconnected")
     async def _on_disconnected(_transport, _client):
-        logger.info(f"Llamada desconectada (session={session.id})")
+        logger.info(f"[WebRTC] Cliente desconectado — session={session.id}")
         await worker.cancel(reason="client disconnected")
 
+    logger.info(f"[run_call] Lanzando WorkerRunner — session={session.id}")
     runner = WorkerRunner()
     try:
         await runner.run(worker)
     finally:
-        logger.info(f"Pipeline finalizado (session={session.id})")
+        logger.info(f"[run_call] WorkerRunner finalizado — session={session.id}")

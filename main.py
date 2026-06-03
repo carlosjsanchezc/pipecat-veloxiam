@@ -119,11 +119,17 @@ async def start_call(data: dict):
 
 async def _run_and_cleanup(connection: SmallWebRTCConnection, session, cfg: BotConfig):
     """Ejecuta el pipeline y, al terminar, asegura el flush del transcript."""
+    logger.info(
+        f"[pipeline] Iniciando — session={session.id} call_id={session.call_id} "
+        f"bot={cfg.bot_id} voice={cfg.voice_id} lang={cfg.language}"
+    )
     try:
         await run_call(connection, session, app.state.http, cfg)
+        logger.info(f"[pipeline] Terminó normalmente — session={session.id}")
     except Exception as e:  # noqa: BLE001
-        logger.error(f"Pipeline error (session={session.id}): {e}")
+        logger.exception(f"[pipeline] Error inesperado — session={session.id}: {e}")
     finally:
+        logger.info(f"[pipeline] Limpiando sesión — session={session.id}")
         await app.state.sessions.terminate(session.call_id)
 
 
