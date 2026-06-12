@@ -22,9 +22,10 @@ def create_tts(cfg: BotConfig) -> CartesiaTTSService:
         api_key=os.environ["CARTESIA_API_KEY"],
         voice_id=cfg.voice_id,
         model=cfg.cartesia_model,
-        sample_rate=16000,        # coincidir con WebRTC transport
+        sample_rate=16000,
         encoding="pcm_s16le",
         container="raw",
-        max_buffer_delay_ms=0,    # elimina buffer server-side, chunks fluyen inmediato
+        max_buffer_delay_ms=0,
+        cartesia_version="2026-03-01",
         params=CartesiaTTSService.InputParams(language=to_language(cfg.language)),
     )

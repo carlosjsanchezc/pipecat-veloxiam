@@ -217,17 +217,18 @@ async def run_call(
         f"voice={cfg.voice_id} lang={cfg.language} llm_url={llm_url}"
     )
 
+    SAMPLE_RATE = 16000  # consistente en todo el pipeline
+
     stt = create_stt(cfg)
     tts = create_tts(cfg)
     vad = create_vad_analyzer()
     logger.info(f"[run_call] STT/TTS/VAD creados — session={session.id}")
-    SAMPLE_RATE = 16000  # consistente en todo el pipeline
 
     transport = SmallWebRTCTransport(
         webrtc_connection=connection,
         params=TransportParams(
             audio_in_enabled=True,
-            audio_out_enabled=True,        a
+            audio_out_enabled=True,
             audio_in_sample_rate=SAMPLE_RATE,
             audio_out_sample_rate=SAMPLE_RATE,
         ),
