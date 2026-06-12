@@ -270,7 +270,7 @@ async def run_call(
         logger.info(f"[WebRTC] Cliente conectado — session={session.id}")
         if greeting:
             async def _send_greeting():
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1.0)
                 logger.info(f"[WebRTC] Encolando saludo TTS: {greeting!r}")
                 session.add_turn("assistant", greeting, None)
                 await worker.queue_frame(TTSSpeakFrame(greeting))
