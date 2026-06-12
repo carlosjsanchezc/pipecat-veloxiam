@@ -221,12 +221,15 @@ async def run_call(
     tts = create_tts(cfg)
     vad = create_vad_analyzer()
     logger.info(f"[run_call] STT/TTS/VAD creados — session={session.id}")
+    SAMPLE_RATE = 16000  # consistente en todo el pipeline
 
     transport = SmallWebRTCTransport(
         webrtc_connection=connection,
         params=TransportParams(
             audio_in_enabled=True,
-            audio_out_enabled=True,
+            audio_out_enabled=True,        a
+            audio_in_sample_rate=SAMPLE_RATE,
+            audio_out_sample_rate=SAMPLE_RATE,
         ),
     )
 
@@ -266,7 +269,7 @@ async def run_call(
         logger.info(f"[WebRTC] Cliente conectado — session={session.id}")
         if greeting:
             async def _send_greeting():
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.5)
                 logger.info(f"[WebRTC] Encolando saludo TTS: {greeting!r}")
                 session.add_turn("assistant", greeting, None)
                 await worker.queue_frame(TTSSpeakFrame(greeting))

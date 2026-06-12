@@ -33,6 +33,7 @@ def create_stt(cfg: BotConfig) -> DeepgramSTTService:
     """Crea el servicio Deepgram STT en streaming, con el idioma/modelo del bot."""
     return DeepgramSTTService(
         api_key=os.environ["DEEPGRAM_API_KEY"],
+        sample_rate=16000,
         settings=DeepgramSTTService.Settings(
             model=cfg.deepgram_model,
             language=to_language(cfg.language),
