@@ -68,21 +68,24 @@ async def run_telnyx_call(
     """
     llm_url = os.environ["LLM_RESPONSE_URL"]
 
-    # Telnyx abre el WS y manda primero un evento "connected" y luego "start"
-    # (con el stream_id que necesita el serializer). Los leemos antes de montar
-    # el transporte; este seguirá leyendo desde los frames "media".
-    stream_id = await _read_stream_id(websocket)
-    if not stream_id:
-        logger.error(f"[telnyx] No se recibió stream_id — abortando session={session.id}")
+    # Telnyx abre el WS y manda primero "connected" y luego "start" (stream_id +
+    # media_format.encoding). Los leemos antes de montar el transporte; este
+    # seguirá leyendo desde los frames "media".
+    start = await _read_telnyx_start(websocket)
+    if not start:
+        logger.error(f"[telnyx] No se recibió evento start — abortando session={session.id}")
         return
 
     logger.info(
-        f"[run_telnyx_call] session={session.id} stream_id={stream_id} "
-        f"call_control_id={call_control_id} voice={cfg.voice_id} lang={cfg.language}"
+        f"[run_telnyx_call] session={session.id} stream_id={start['stream_id']} "
+        f"encoding={start['outbound_encoding']} call_control_id={call_control_id} "
+        f"voice={cfg.voice_id} lang={cfg.language}"
     )
 
     serializer = TelnyxFrameSerializer(
-        stream_id=stream_id,
+        stream_id=start["stream_id"],
+        outbound_encoding=start["outbound_encoding"],
+        inbound_encoding=start["inbound_encoding"],
         # call_control_id + api_key (opcional) permiten que el serializer cuelgue
         # la llamada en Telnyx automáticamente al terminar el pipeline. Si no hay
         # TELNYX_API_KEY, Telnyx cuelga igual cuando el llamante corta.
@@ -158,12 +161,13 @@ async def run_telnyx_call(
         logger.info(f"[run_telnyx_call] WorkerRunner finalizado — session={session.id}")
 
 
-async def _read_stream_id(websocket: WebSocket) -> str | None:
-    """Lee los primeros eventos del WS de Telnyx hasta obtener el stream_id.
+async def _read_telnyx_start(websocket: WebSocket) -> dict | None:
+    """Lee los primeros eventos del WS de Telnyx hasta obtener el evento ``start``.
 
-    Telnyx envía ``{"event":"connected"}`` y luego ``{"event":"start", ...}``.
-    El stream_id puede venir en la raíz o dentro de ``start``.
+    Telnyx envía ``{"event":"connected"}`` y luego ``{"event":"start", ...}`` con
+    ``stream_id`` y ``start.media_format.encoding`` (p. ej. PCMU).
     """
+    default_encoding = "PCMU"
     for _ in range(5):  # tolera algún evento extra antes del "start"
         try:
             raw = await websocket.receive_text()
@@ -174,6 +178,16 @@ async def _read_stream_id(websocket: WebSocket) -> str | None:
             msg = json.loads(raw)
         except json.JSONDecodeError:
             continue
-        if msg.get("event") == "start":
-            return msg.get("stream_id") or msg.get("start", {}).get("stream_id")
+        if msg.get("event") != "start":
+            continue
+        start = msg.get("start", {})
+        stream_id = msg.get("stream_id") or start.get("stream_id")
+        if not stream_id:
+            return None
+        encoding = start.get("media_format", {}).get("encoding", default_encoding)
+        return {
+            "stream_id": stream_id,
+            "outbound_encoding": encoding,
+            "inbound_encoding": encoding,
+        }
     return None
