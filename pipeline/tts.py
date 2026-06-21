@@ -13,8 +13,12 @@ from pipeline.config import BotConfig
 from pipeline.lang import to_language
 
 
-def create_tts(cfg: BotConfig) -> CartesiaTTSService:
-    """Crea el servicio Cartesia TTS con la voz/idioma/modelo del bot."""
+def create_tts(cfg: BotConfig, sample_rate: int = 16000) -> CartesiaTTSService:
+    """Crea el servicio Cartesia TTS con la voz/idioma/modelo del bot.
+
+    ``sample_rate`` por defecto 16000 (WhatsApp/WebRTC). Telefonía Telnyx usa
+    8000 (PCMU), por lo que el transporte Telnyx pasa sample_rate=8000.
+    """
     if not cfg.voice_id:
         raise RuntimeError(f"Bot {cfg.bot_id} sin voice_id en su configuración.")
 
@@ -22,7 +26,7 @@ def create_tts(cfg: BotConfig) -> CartesiaTTSService:
         api_key=os.environ["CARTESIA_API_KEY"],
         voice_id=cfg.voice_id,
         model=cfg.cartesia_model,
-        sample_rate=16000,
+        sample_rate=sample_rate,
         encoding="pcm_s16le",
         container="raw",
         max_buffer_delay_ms=100,

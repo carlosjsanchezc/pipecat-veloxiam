@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket
 from loguru import logger
 
 from pipecat.frames.frames import TTSSpeakFrame
@@ -29,6 +29,7 @@ from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConn
 
 from pipeline.bridge import run_call
 from pipeline.config import BotConfig
+from pipeline.telnyx import run_telnyx_call
 from session_manager import SessionManager
 
 load_dotenv()
@@ -180,6 +181,58 @@ async def agent_response(data: dict):
     session.add_turn("assistant", text, None)
     await session.worker.queue_frame(TTSSpeakFrame(text))
     return {"status": "queued"}
+
+
+# --------------------------------------------------------------------------- #
+# Telnyx Media Streaming (telefonía PSTN)
+# --------------------------------------------------------------------------- #
+@app.websocket("/telnyx")
+async def telnyx_stream(websocket: WebSocket):
+    """WebSocket de Telnyx Media Streaming.
+
+    Veloxiam (NestJS) ya contestó la llamada y resolvió el bot por el número
+    llamado; arrancó el streaming hacia aquí con el contexto en la query:
+    ``?botId=...&voiceId=...&from=...&to=...&callId=<call_control_id>``.
+
+    Reutiliza el mismo pipeline que WhatsApp, con transporte WebSocket + Telnyx
+    serializer (PCMU 8000).
+    """
+    await websocket.accept()
+    q = websocket.query_params
+    bot_id = q.get("botId")
+    voice_id = q.get("voiceId")
+    call_id = q.get("callId") or ""  # = call_control_id
+
+    if not bot_id or not voice_id:
+        logger.error(f"[telnyx] WS sin botId/voiceId (q={dict(q)}) — cerrando")
+        await websocket.close(code=1008)
+        return
+
+    sessions: SessionManager = app.state.sessions
+    if sessions.is_full():
+        logger.warning("[telnyx] Máximo de sesiones alcanzado — cerrando WS")
+        await websocket.close(code=1013)
+        return
+
+    cfg = BotConfig(
+        bot_id=bot_id,
+        voice_id=voice_id,
+        greeting=q.get("greeting", "Hola, gracias por llamar. ¿En qué puedo ayudarte?"),
+    )
+    session = sessions.create(
+        call_id=call_id or bot_id,
+        bot_id=bot_id,
+        tenant_id=bot_id,
+        phone_number=q.get("from", "unknown"),
+    )
+
+    logger.info(f"[telnyx] WS aceptado bot={bot_id} from={q.get('from')} call_id={call_id}")
+    try:
+        await run_telnyx_call(websocket, session, app.state.http, cfg, call_id)
+    except Exception as e:  # noqa: BLE001
+        logger.exception(f"[telnyx] Error en la llamada session={session.id}: {e}")
+    finally:
+        await app.state.sessions.terminate(session.call_id)
 
 
 @app.get("/health")

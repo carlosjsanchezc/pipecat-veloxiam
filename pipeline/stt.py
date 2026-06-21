@@ -29,11 +29,15 @@ from pipeline.config import BotConfig
 from pipeline.lang import to_language
 
 
-def create_stt(cfg: BotConfig) -> DeepgramSTTService:
-    """Crea el servicio Deepgram STT en streaming, con el idioma/modelo del bot."""
+def create_stt(cfg: BotConfig, sample_rate: int = 16000) -> DeepgramSTTService:
+    """Crea el servicio Deepgram STT en streaming, con el idioma/modelo del bot.
+
+    ``sample_rate`` por defecto 16000 (WhatsApp/WebRTC). Telefonía Telnyx usa
+    8000 (PCMU), por lo que el transporte Telnyx pasa sample_rate=8000.
+    """
     return DeepgramSTTService(
         api_key=os.environ["DEEPGRAM_API_KEY"],
-        sample_rate=16000,
+        sample_rate=sample_rate,
         settings=DeepgramSTTService.Settings(
             model=cfg.deepgram_model,
             language=to_language(cfg.language),
