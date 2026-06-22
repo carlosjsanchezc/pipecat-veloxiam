@@ -61,6 +61,7 @@ async def run_telnyx_call(
     http,
     cfg: BotConfig,
     call_control_id: str,
+    telnyx_api_key: str | None = None,
 ):
     """Construye y ejecuta el pipeline sobre una conexión WebSocket de Telnyx.
 
@@ -86,11 +87,12 @@ async def run_telnyx_call(
         stream_id=start["stream_id"],
         outbound_encoding=start["outbound_encoding"],
         inbound_encoding=start["inbound_encoding"],
-        # call_control_id + api_key (opcional) permiten que el serializer cuelgue
-        # la llamada en Telnyx automáticamente al terminar el pipeline. Si no hay
-        # TELNYX_API_KEY, Telnyx cuelga igual cuando el llamante corta.
+        # call_control_id + api_key (la del bot, vía query) permiten que el
+        # serializer cuelgue la llamada en Telnyx automáticamente al terminar el
+        # pipeline. Multi-bot: cada bot tiene su propia key. Si no llega, Telnyx
+        # cuelga igual cuando el llamante corta.
         call_control_id=call_control_id or None,
-        api_key=os.getenv("TELNYX_API_KEY") or None,
+        api_key=telnyx_api_key or os.getenv("TELNYX_API_KEY") or None,
         params=TelnyxFrameSerializer.InputParams(
             telnyx_sample_rate=TELNYX_SAMPLE_RATE,
             sample_rate=TELNYX_SAMPLE_RATE,

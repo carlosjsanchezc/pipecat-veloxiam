@@ -192,7 +192,7 @@ async def telnyx_stream(websocket: WebSocket):
 
     Veloxiam (NestJS) ya contestó la llamada y resolvió el bot por el número
     llamado; arrancó el streaming hacia aquí con el contexto en la query:
-    ``?botId=...&voiceId=...&from=...&to=...&callId=<call_control_id>``.
+    ``?botId=...&voiceId=...&telnyxApiKey=...&from=...&to=...&callId=<call_control_id>``.
 
     Reutiliza el mismo pipeline que WhatsApp, con transporte WebSocket + Telnyx
     serializer (PCMU 8000).
@@ -201,6 +201,7 @@ async def telnyx_stream(websocket: WebSocket):
     q = websocket.query_params
     bot_id = q.get("botId")
     voice_id = q.get("voiceId")
+    telnyx_api_key = q.get("telnyxApiKey")  # API key propia del bot
     call_id = q.get("callId") or ""  # = call_control_id
 
     if not bot_id or not voice_id:
@@ -228,7 +229,9 @@ async def telnyx_stream(websocket: WebSocket):
 
     logger.info(f"[telnyx] WS aceptado bot={bot_id} from={q.get('from')} call_id={call_id}")
     try:
-        await run_telnyx_call(websocket, session, app.state.http, cfg, call_id)
+        await run_telnyx_call(
+            websocket, session, app.state.http, cfg, call_id, telnyx_api_key
+        )
     except Exception as e:  # noqa: BLE001
         logger.exception(f"[telnyx] Error en la llamada session={session.id}: {e}")
     finally:
