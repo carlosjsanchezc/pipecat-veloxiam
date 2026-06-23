@@ -14,7 +14,7 @@ class BotConfig:
     bot_id: str
     voice_id: str
     language: str = "es"
-    cartesia_model: str = "sonic-2"
+    cartesia_model: str = "sonic-3.5"
     deepgram_model: str = "nova-2-general"
     tenant_id: str = "default"
     greeting: str = ""
