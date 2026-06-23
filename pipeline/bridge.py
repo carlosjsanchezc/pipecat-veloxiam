@@ -51,7 +51,7 @@ from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
 from pipeline.config import BotConfig
-from pipeline.stt import TranscriptionTap, create_stt
+from pipeline.stt import AudioInputTap, PipelineErrorTap, TranscriptionTap, create_stt
 from pipeline.tts import create_tts
 from pipeline.vad import create_vad_analyzer
 
@@ -245,8 +245,10 @@ async def run_call(
     pipeline = Pipeline(
         [
             transport.input(),
+            AudioInputTap(session.id),
             stt,
             TranscriptionTap(session),
+            PipelineErrorTap(),
             user_aggregator,
             agent,
             tts,
@@ -256,7 +258,14 @@ async def run_call(
     )
     logger.info(f"[run_call] Pipeline construido — session={session.id}")
 
-    worker = PipelineWorker(pipeline, params=PipelineParams(enable_metrics=False))
+    worker = PipelineWorker(
+        pipeline,
+        params=PipelineParams(
+            enable_metrics=False,
+            audio_in_sample_rate=SAMPLE_RATE,
+            audio_out_sample_rate=SAMPLE_RATE,
+        ),
+    )
     session.worker = worker
 
     greeting = (cfg.greeting or "").strip()

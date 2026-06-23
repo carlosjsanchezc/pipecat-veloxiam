@@ -12,13 +12,17 @@ El confidence de Deepgram viaja en ``TranscriptionFrame.result`` (el resultado
 crudo del SDK). De ahí lo extraemos con ``transcription_confidence``.
 """
 
+import audioop
 import os
+import time
 from typing import Optional
 
 from loguru import logger
 
 from pipecat.frames.frames import (
+    ErrorFrame,
     Frame,
+    InputAudioRawFrame,
     InterimTranscriptionFrame,
     TranscriptionFrame,
 )
@@ -35,6 +39,11 @@ def create_stt(cfg: BotConfig, sample_rate: int = 16000) -> DeepgramSTTService:
     ``sample_rate`` por defecto 16000 (WhatsApp/WebRTC). Telefonía Telnyx usa
     8000 (PCMU), por lo que el transporte Telnyx pasa sample_rate=8000.
     """
+    logger.info(
+        f"[Deepgram] STT init — bot_id={cfg.bot_id} model={cfg.deepgram_model} "
+        f"lang={to_language(cfg.language)} sample_rate={sample_rate}"
+    )
+
     return DeepgramSTTService(
         api_key=os.environ["DEEPGRAM_API_KEY"],
         sample_rate=sample_rate,
@@ -69,6 +78,56 @@ def transcription_confidence(frame: Frame) -> Optional[float]:
         return None
 
 
+class AudioInputTap(FrameProcessor):
+    """Observa audio crudo del transporte para diagnosticar si WebRTC envía media."""
+
+    def __init__(self, session_id: str, **kwargs):
+        super().__init__(**kwargs)
+        self._session_id = session_id
+        self._chunks = 0
+        self._rms_max = 0
+        self._last_log = 0.0
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, InputAudioRawFrame):
+            self._chunks += 1
+            if frame.audio:
+                rms = audioop.rms(frame.audio, 2)
+                self._rms_max = max(self._rms_max, rms)
+            now = time.monotonic()
+            if now - self._last_log >= 5.0:
+                if self._chunks == 0:
+                    logger.warning(
+                        f"[audio-in] session={self._session_id} sin chunks en 5s "
+                        f"— WebRTC no está enviando audio entrante"
+                    )
+                else:
+                    logger.info(
+                        f"[audio-in] session={self._session_id} "
+                        f"chunks={self._chunks} rms_max={self._rms_max} "
+                        f"sr={frame.sample_rate}"
+                    )
+                self._chunks = 0
+                self._rms_max = 0
+                self._last_log = now
+
+        await self.push_frame(frame, direction)
+
+
+class PipelineErrorTap(FrameProcessor):
+    """Registra ErrorFrame del pipeline (p. ej. Deepgram/Cartesia desconectados)."""
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, ErrorFrame):
+            logger.error(f"[pipeline-error] {frame.error!r} fatal={frame.fatal}")
+
+        await self.push_frame(frame, direction)
+
+
 class TranscriptionTap(FrameProcessor):
     """Observa las transcripciones STT, las registra con su confidence en la
     sesión y reenvía todos los frames intactos (no consume nada)."""
@@ -88,6 +147,7 @@ class TranscriptionTap(FrameProcessor):
             self._session.last_user_confidence = conf
         elif isinstance(frame, InterimTranscriptionFrame):
             conf = transcription_confidence(frame)
-            logger.debug(f"[STT interim] ({conf}) {frame.text!r}")
+            if frame.text and frame.text.strip():
+                logger.info(f"[STT interim] ({conf}) {frame.text!r}")
 
         await self.push_frame(frame, direction)
