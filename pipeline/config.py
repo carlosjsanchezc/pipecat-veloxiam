@@ -18,6 +18,11 @@ class BotConfig:
     deepgram_model: str = "nova-2-general"
     tenant_id: str = "default"
     greeting: str = ""
+    # Outbound: si True, `greeting` es una instrucción para que la IA genere el
+    # saludo (no se dice literal). Si False, se dice tal cual.
+    is_ia_content: bool = False
+    # Outbound: chatId para mantener el historial de la conversación.
+    chat_id: str = ""
 
     @classmethod
     def from_request(cls, data: dict) -> "BotConfig":

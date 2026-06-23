@@ -142,13 +142,22 @@ async def run_telnyx_call(
     @transport.event_handler("on_client_connected")
     async def _on_connected(_transport, _client):
         logger.info(f"[telnyx] Cliente conectado — session={session.id}")
-        if greeting:
-            async def _send_greeting():
-                await asyncio.sleep(0.5)
+        if not greeting:
+            return
+
+        async def _open():
+            await asyncio.sleep(0.5)
+            if cfg.is_ia_content:
+                # `greeting` es una instrucción: la IA genera el saludo y lo dice.
+                logger.info(f"[telnyx] Saludo IA desde instrucción: {greeting!r}")
+                await agent._respond(greeting)
+            else:
+                # `greeting` se dice literal.
                 logger.info(f"[telnyx] Encolando saludo TTS: {greeting!r}")
                 session.add_turn("assistant", greeting, None)
                 await worker.queue_frame(TTSSpeakFrame(greeting))
-            asyncio.create_task(_send_greeting())
+
+        asyncio.create_task(_open())
 
     @transport.event_handler("on_client_disconnected")
     async def _on_disconnected(_transport, _client):

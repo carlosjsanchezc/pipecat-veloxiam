@@ -203,6 +203,8 @@ async def telnyx_stream(websocket: WebSocket):
     voice_id = q.get("voiceId")
     telnyx_api_key = q.get("telnyxApiKey")  # API key propia del bot
     call_id = q.get("callId") or ""  # = call_control_id
+    is_ia_content = q.get("isIaContent") == "1"  # outbound: greeting generado por IA
+    chat_id = q.get("chatId") or ""
 
     if not bot_id or not voice_id:
         logger.error(f"[telnyx] WS sin botId/voiceId (q={dict(q)}) — cerrando")
@@ -219,6 +221,8 @@ async def telnyx_stream(websocket: WebSocket):
         bot_id=bot_id,
         voice_id=voice_id,
         greeting=q.get("greeting", "Hola, gracias por llamar. ¿En qué puedo ayudarte?"),
+        is_ia_content=is_ia_content,
+        chat_id=chat_id,
     )
     session = sessions.create(
         call_id=call_id or bot_id,
@@ -226,6 +230,9 @@ async def telnyx_stream(websocket: WebSocket):
         tenant_id=bot_id,
         phone_number=q.get("from", "unknown"),
     )
+    # Outbound: usar el chatId provisto como sessionId para continuar el historial.
+    if chat_id:
+        session.id = chat_id
 
     logger.info(f"[telnyx] WS aceptado bot={bot_id} from={q.get('from')} call_id={call_id}")
     try:
