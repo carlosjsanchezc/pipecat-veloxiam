@@ -31,7 +31,7 @@ class BotConfig:
             bot_id=data["botId"],
             voice_id=data["voiceId"],
             language=data.get("language", "es"),
-            cartesia_model=data.get("cartesiaModel", os.getenv("CARTESIA_MODEL", "sonic-2")),
+            cartesia_model=data.get("cartesiaModel", os.getenv("CARTESIA_MODEL", "sonic-3.5")),
             deepgram_model=data.get(
                 "deepgramModel", os.getenv("DEEPGRAM_MODEL", "nova-2-general")
             ),
