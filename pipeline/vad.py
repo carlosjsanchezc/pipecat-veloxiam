@@ -18,7 +18,7 @@ def create_vad_analyzer() -> SileroVADAnalyzer:
         params=VADParams(
             confidence=0.6,   # umbral de confianza para considerar "voz"
             start_secs=0.2,   # voz sostenida antes de marcar "empezó a hablar"
-            stop_secs=0.4,    # pausa antes de cerrar turno (teléfono/WhatsApp)
+            stop_secs=0.2,    # default Pipecat (requerido para turn detection + STT p99)
             min_volume=0.35,  # audio PSTN/WhatsApp suele llegar más bajo que mic de PC
         )
     )
