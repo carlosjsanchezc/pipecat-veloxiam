@@ -234,7 +234,7 @@ async def telnyx_stream(websocket: WebSocket):
     if chat_id:
         session.id = chat_id
 
-    logger.info(f"[telnyx] WS aceptado bot={bot_id} from={q.get('from')} call_id={call_id}")
+    logger.info(f"[telnyx] WS aceptado bot={bot_id} voiceId={voice_id} from={q.get('from')} call_id={call_id}")
     try:
         await run_telnyx_call(
             websocket, session, app.state.http, cfg, call_id, telnyx_api_key

@@ -7,6 +7,7 @@ recibir un ``InterruptionFrame`` generado por el VAD del agregador de usuario.
 
 import os
 
+from loguru import logger
 from pipecat.services.cartesia.tts import CartesiaTTSService
 
 from pipeline.config import BotConfig
@@ -21,6 +22,12 @@ def create_tts(cfg: BotConfig, sample_rate: int = 16000) -> CartesiaTTSService:
     """
     if not cfg.voice_id:
         raise RuntimeError(f"Bot {cfg.bot_id} sin voice_id en su configuración.")
+
+    logger.info(
+        f"[Cartesia] TTS init — bot_id={cfg.bot_id} voice_id={cfg.voice_id} "
+        f"model={cfg.cartesia_model} lang={to_language(cfg.language)} "
+        f"sample_rate={sample_rate}"
+    )
 
     return CartesiaTTSService(
         api_key=os.environ["CARTESIA_API_KEY"],
