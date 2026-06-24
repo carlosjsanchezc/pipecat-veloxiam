@@ -47,9 +47,6 @@ def create_stt(cfg: BotConfig, sample_rate: int = 16000) -> DeepgramSTTService:
         f"lang={language} sample_rate={sample_rate}"
     )
 
-    # endpointing: ms de silencio antes de cerrar un enunciado (menor = STT final más rápido).
-    endpointing = int(os.getenv("DEEPGRAM_ENDPOINTING_MS", "300"))
-
     return DeepgramSTTService(
         api_key=os.environ["DEEPGRAM_API_KEY"],
         sample_rate=sample_rate,
@@ -59,7 +56,8 @@ def create_stt(cfg: BotConfig, sample_rate: int = 16000) -> DeepgramSTTService:
             interim_results=True,
             smart_format=True,
             punctuate=True,
-            endpointing=endpointing,
+            # Sin endpointing/vad_events: el cierre de turno lo lleva Silero (pipeline/vad.py).
+            endpointing=False,
         ),
     )
 
