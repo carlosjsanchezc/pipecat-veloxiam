@@ -8,6 +8,8 @@ El servicio de TTS reacciona a ``InterruptionFrame`` cancelando el audio en
 curso automáticamente: ahí está el barge-in. Ver pipeline/bridge.py.
 """
 
+import os
+
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.aggregators.llm_response_universal import LLMUserAggregatorParams
@@ -29,7 +31,6 @@ def create_user_aggregator_params(vad: SileroVADAnalyzer) -> LLMUserAggregatorPa
     """Parámetros del agregador de usuario: VAD + timeout de cierre de turno."""
     return LLMUserAggregatorParams(
         vad_analyzer=vad,
-        # Tras el STT final, cuánto esperar silencio antes de llamar al agente.
-        # 3 s se sentía "muerto"; 1 s es más natural en voz.
-        user_turn_stop_timeout=1.0,
+        # Tras dejar de hablar, cuánto esperar silencio antes de llamar al agente.
+        user_turn_stop_timeout=float(os.getenv("USER_TURN_STOP_TIMEOUT_SEC", "1.0")),
     )

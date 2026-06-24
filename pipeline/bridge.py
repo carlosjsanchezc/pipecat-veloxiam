@@ -328,7 +328,8 @@ async def run_call(
             async def _send_greeting():
                 # Dejar que Deepgram abra el WS antes del TTS del saludo; si el
                 # usuario habla primero, no hablamos encima ni perdemos su audio.
-                await asyncio.sleep(2.5)
+                delay = float(os.getenv("GREETING_DELAY_SEC", "2.5"))
+                await asyncio.sleep(delay)
                 if getattr(session, "user_spoke", False):
                     logger.info(
                         f"[WebRTC] Usuario habló primero — omitiendo saludo "

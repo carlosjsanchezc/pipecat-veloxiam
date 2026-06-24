@@ -152,7 +152,8 @@ async def run_telnyx_call(
             return
 
         async def _open():
-            await asyncio.sleep(0.5)
+            delay = float(os.getenv("TELNYX_GREETING_DELAY_SEC", "0.5"))
+            await asyncio.sleep(delay)
             if cfg.is_ia_content:
                 # `greeting` es una instrucción: la IA genera el saludo y lo dice.
                 logger.info(f"[telnyx] Saludo IA desde instrucción: {greeting!r}")
