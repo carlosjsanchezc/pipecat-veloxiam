@@ -33,10 +33,7 @@ from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import (
-    LLMContextAggregatorPair,
-    LLMUserAggregatorParams,
-)
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.serializers.telnyx import TelnyxFrameSerializer
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
@@ -46,9 +43,9 @@ from pipecat.workers.runner import WorkerRunner
 
 from pipeline.bridge import NestJSAgentProcessor
 from pipeline.config import BotConfig
-from pipeline.stt import TranscriptionTap, create_stt
+from pipeline.stt import AudioInputTap, PipelineErrorTap, TranscriptionTap, create_stt
 from pipeline.tts import create_tts
-from pipeline.vad import create_vad_analyzer
+from pipeline.vad import create_user_aggregator_params, create_vad_analyzer
 
 # Telefonía: PCMU (g711 µ-law) a 8 kHz. Coincide con el streaming_start de NestJS
 # (stream_bidirectional_codec=PCMU) y con el default del TelnyxFrameSerializer.
@@ -109,14 +106,14 @@ async def run_telnyx_call(
         ),
     )
 
-    stt = create_stt(cfg, sample_rate=TELNYX_SAMPLE_RATE)
+    stt = create_stt(cfg, sample_rate=TELNYX_SAMPLE_RATE, telephony=True)
     tts = create_tts(cfg, sample_rate=TELNYX_SAMPLE_RATE)
     vad = create_vad_analyzer()
 
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(vad_analyzer=vad),
+        user_params=create_user_aggregator_params(vad),
     )
 
     agent = NestJSAgentProcessor(session=session, http=http, llm_url=llm_url)
@@ -124,8 +121,10 @@ async def run_telnyx_call(
     pipeline = Pipeline(
         [
             transport.input(),
+            AudioInputTap(session.id),
             stt,
             TranscriptionTap(session),
+            PipelineErrorTap(),
             user_aggregator,
             agent,
             tts,
@@ -134,7 +133,14 @@ async def run_telnyx_call(
         ]
     )
 
-    worker = PipelineWorker(pipeline, params=PipelineParams(enable_metrics=False))
+    worker = PipelineWorker(
+        pipeline,
+        params=PipelineParams(
+            enable_metrics=False,
+            audio_in_sample_rate=TELNYX_SAMPLE_RATE,
+            audio_out_sample_rate=TELNYX_SAMPLE_RATE,
+        ),
+    )
     session.worker = worker
 
     greeting = (cfg.greeting or "").strip()

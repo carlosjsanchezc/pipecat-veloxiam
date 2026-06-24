@@ -10,15 +10,24 @@ curso automáticamente: ahí está el barge-in. Ver pipeline/bridge.py.
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.processors.aggregators.llm_response_universal import LLMUserAggregatorParams
 
 
 def create_vad_analyzer() -> SileroVADAnalyzer:
     """Crea el analizador Silero VAD afinado para conversación en español."""
     return SileroVADAnalyzer(
         params=VADParams(
-            confidence=0.6,   # umbral de confianza para considerar "voz"
-            start_secs=0.2,   # voz sostenida antes de marcar "empezó a hablar"
+            confidence=0.55,
+            start_secs=0.15,  # reaccionar antes al habla (barge-in / turno)
             stop_secs=0.2,    # default Pipecat (requerido para turn detection + STT p99)
             min_volume=0.35,  # audio PSTN/WhatsApp suele llegar más bajo que mic de PC
         )
+    )
+
+
+def create_user_aggregator_params(vad: SileroVADAnalyzer) -> LLMUserAggregatorParams:
+    """Parámetros del agregador de usuario: VAD + timeout de cierre de turno."""
+    return LLMUserAggregatorParams(
+        vad_analyzer=vad,
+        user_turn_stop_timeout=3.0,
     )

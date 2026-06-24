@@ -42,7 +42,6 @@ from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
-    LLMUserAggregatorParams,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.transports.base_transport import TransportParams
@@ -53,7 +52,7 @@ from pipecat.workers.runner import WorkerRunner
 from pipeline.config import BotConfig
 from pipeline.stt import AudioInputTap, PipelineErrorTap, TranscriptionTap, create_stt
 from pipeline.tts import create_tts
-from pipeline.vad import create_vad_analyzer
+from pipeline.vad import create_user_aggregator_params, create_vad_analyzer
 
 
 def _content_to_text(content: Any) -> str:
@@ -272,7 +271,7 @@ async def run_call(
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(vad_analyzer=vad),
+        user_params=create_user_aggregator_params(vad),
     )
 
     agent = NestJSAgentProcessor(session=session, http=http, llm_url=llm_url)

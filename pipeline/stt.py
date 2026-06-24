@@ -33,26 +33,47 @@ from pipeline.config import BotConfig
 from pipeline.lang import to_language
 
 
-def create_stt(cfg: BotConfig, sample_rate: int = 16000) -> DeepgramSTTService:
+def create_stt(
+    cfg: BotConfig,
+    sample_rate: int = 16000,
+    *,
+    telephony: bool = False,
+) -> DeepgramSTTService:
     """Crea el servicio Deepgram STT en streaming, con el idioma/modelo del bot.
 
     ``sample_rate`` por defecto 16000 (WhatsApp/WebRTC). Telefonía Telnyx usa
-    8000 (PCMU), por lo que el transporte Telnyx pasa sample_rate=8000.
+    8000 (PCMU), por lo que el transporte Telnyx pasa ``telephony=True``.
+
+    Telefonía: modelo ``nova-2-phonecall`` (u ``DEEPGRAM_PHONE_MODEL``) y
+    endpointing más agresivo para cerrar turnos antes y reducir huecos en los
+    que Deepgram pierde el WebSocket (NET0001).
     """
+    if telephony:
+        model = os.getenv("DEEPGRAM_PHONE_MODEL", "nova-2-phonecall")
+    else:
+        model = cfg.deepgram_model
+
     logger.info(
-        f"[Deepgram] STT init — bot_id={cfg.bot_id} model={cfg.deepgram_model} "
-        f"lang={to_language(cfg.language)} sample_rate={sample_rate}"
+        f"[Deepgram] STT init — bot_id={cfg.bot_id} model={model} "
+        f"lang={to_language(cfg.language)} sample_rate={sample_rate} "
+        f"telephony={telephony}"
     )
 
     return DeepgramSTTService(
         api_key=os.environ["DEEPGRAM_API_KEY"],
         sample_rate=sample_rate,
+        # P99 STT → alinea turn detection del agregador con Deepgram.
+        ttfs_p99_latency=float(os.getenv("DEEPGRAM_TTFS_P99_LATENCY", "0.35")),
         settings=DeepgramSTTService.Settings(
-            model=cfg.deepgram_model,
+            model=model,
             language=to_language(cfg.language),
-            interim_results=True,  # transcripción parcial, palabra por palabra
+            interim_results=True,
             smart_format=True,
             punctuate=True,
+            # Cierra finales más rápido tras pausa breve (ms de silencio).
+            endpointing=int(os.getenv("DEEPGRAM_ENDPOINTING_MS", "300")),
+            utterance_end_ms=int(os.getenv("DEEPGRAM_UTTERANCE_END_MS", "1000")),
+            vad_events=True,
         ),
     )
 
