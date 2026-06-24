@@ -88,21 +88,32 @@ def transcription_confidence(frame: Frame) -> Optional[float]:
 class AudioInputTap(FrameProcessor):
     """Observa audio crudo del transporte para diagnosticar si WebRTC envía media."""
 
+    _SPEECH_RMS = 1500  # umbral aprox. de voz en PCM s16le
+
     def __init__(self, session_id: str, **kwargs):
         super().__init__(**kwargs)
         self._session_id = session_id
         self._chunks = 0
         self._rms_max = 0
         self._last_log = 0.0
+        self._last_speech_log = 0.0
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, InputAudioRawFrame):
             self._chunks += 1
+            rms = 0
             if frame.audio:
                 rms = audioop.rms(frame.audio, 2)
                 self._rms_max = max(self._rms_max, rms)
+                now = time.monotonic()
+                if rms >= self._SPEECH_RMS and now - self._last_speech_log >= 2.0:
+                    logger.info(
+                        f"[audio-in] voz detectada rms={rms} "
+                        f"session={self._session_id}"
+                    )
+                    self._last_speech_log = now
             now = time.monotonic()
             if now - self._last_log >= 5.0:
                 if self._chunks == 0:
@@ -132,13 +143,22 @@ class AudioOutputTap(FrameProcessor):
         self._chunks = 0
         self._bytes = 0
         self._last_log = 0.0
+        self._early_chunks = 0
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, OutputAudioRawFrame):
+            nbytes = len(frame.audio or b"")
             self._chunks += 1
-            self._bytes += len(frame.audio or b"")
+            self._bytes += nbytes
+            if self._early_chunks < 12:
+                self._early_chunks += 1
+                logger.info(
+                    f"[audio-out] chunk #{self._early_chunks} "
+                    f"bytes={nbytes} sr={frame.sample_rate} "
+                    f"session={self._session_id}"
+                )
             now = time.monotonic()
             if now - self._last_log >= 5.0:
                 if self._chunks:
