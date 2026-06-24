@@ -24,6 +24,7 @@ from pipecat.frames.frames import (
     Frame,
     InputAudioRawFrame,
     InterimTranscriptionFrame,
+    OutputAudioRawFrame,
     TranscriptionFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -111,6 +112,37 @@ class AudioInputTap(FrameProcessor):
                     )
                 self._chunks = 0
                 self._rms_max = 0
+                self._last_log = now
+
+        await self.push_frame(frame, direction)
+
+
+class AudioOutputTap(FrameProcessor):
+    """Observa audio TTS hacia el transporte (diagnóstico WebRTC saliente)."""
+
+    def __init__(self, session_id: str, **kwargs):
+        super().__init__(**kwargs)
+        self._session_id = session_id
+        self._chunks = 0
+        self._bytes = 0
+        self._last_log = 0.0
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, OutputAudioRawFrame):
+            self._chunks += 1
+            self._bytes += len(frame.audio or b"")
+            now = time.monotonic()
+            if now - self._last_log >= 5.0:
+                if self._chunks:
+                    logger.info(
+                        f"[audio-out] session={self._session_id} "
+                        f"chunks={self._chunks} bytes={self._bytes} "
+                        f"sr={frame.sample_rate}"
+                    )
+                self._chunks = 0
+                self._bytes = 0
                 self._last_log = now
 
         await self.push_frame(frame, direction)

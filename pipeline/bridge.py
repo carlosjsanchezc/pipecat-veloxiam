@@ -50,7 +50,13 @@ from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
 from pipeline.config import BotConfig
-from pipeline.stt import AudioInputTap, PipelineErrorTap, TranscriptionTap, create_stt
+from pipeline.stt import (
+    AudioInputTap,
+    AudioOutputTap,
+    PipelineErrorTap,
+    TranscriptionTap,
+    create_stt,
+)
 from pipeline.tts import create_tts
 from pipeline.vad import create_user_aggregator_params, create_vad_analyzer
 
@@ -286,6 +292,7 @@ async def run_call(
             user_aggregator,
             agent,
             tts,
+            AudioOutputTap(session.id),
             transport.output(),
             assistant_aggregator,
         ]
@@ -310,7 +317,11 @@ async def run_call(
 
     @transport.event_handler("on_client_connected")
     async def _on_connected(_transport, _client):
-        logger.info(f"[WebRTC] Cliente conectado — session={session.id}")
+        pc = connection.pc
+        logger.info(
+            f"[WebRTC] Cliente conectado — session={session.id} "
+            f"ice={pc.iceConnectionState} conn={pc.connectionState}"
+        )
         if greeting:
             async def _send_greeting():
                 await asyncio.sleep(1.0)
