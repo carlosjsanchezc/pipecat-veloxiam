@@ -26,6 +26,8 @@ from pipecat.frames.frames import (
     InterimTranscriptionFrame,
     OutputAudioRawFrame,
     TranscriptionFrame,
+    UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.deepgram.stt import DeepgramSTTService
@@ -45,6 +47,9 @@ def create_stt(cfg: BotConfig, sample_rate: int = 16000) -> DeepgramSTTService:
         f"lang={language} sample_rate={sample_rate}"
     )
 
+    # endpointing: ms de silencio antes de cerrar un enunciado (menor = STT final más rápido).
+    endpointing = int(os.getenv("DEEPGRAM_ENDPOINTING_MS", "300"))
+
     return DeepgramSTTService(
         api_key=os.environ["DEEPGRAM_API_KEY"],
         sample_rate=sample_rate,
@@ -54,6 +59,7 @@ def create_stt(cfg: BotConfig, sample_rate: int = 16000) -> DeepgramSTTService:
             interim_results=True,
             smart_format=True,
             punctuate=True,
+            endpointing=endpointing,
         ),
     )
 
@@ -160,6 +166,25 @@ class PipelineErrorTap(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+class UserSpeechTap(FrameProcessor):
+    """Registra cuándo el VAD detecta voz del usuario (antes del STT final)."""
+
+    def __init__(self, session, **kwargs):
+        super().__init__(**kwargs)
+        self._session = session
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, UserStartedSpeakingFrame):
+            self._session.user_spoke = True
+            logger.info(f"[VAD] usuario hablando — session={self._session.id}")
+        elif isinstance(frame, UserStoppedSpeakingFrame):
+            logger.info(f"[VAD] usuario en silencio — session={self._session.id}")
+
+        await self.push_frame(frame, direction)
+
+
 class TranscriptionTap(FrameProcessor):
     """Observa las transcripciones STT, las registra con su confidence en la
     sesión y reenvía todos los frames intactos (no consume nada)."""
@@ -172,12 +197,15 @@ class TranscriptionTap(FrameProcessor):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, TranscriptionFrame):
+            self._session.user_spoke = True
             conf = transcription_confidence(frame)
             logger.info(f"[STT final] ({conf}) {frame.text!r}")
             # Guardamos el confidence de la última final para asociarlo al turno
             # de usuario cuando el agregador cierre el turno (ver bridge.py).
             self._session.last_user_confidence = conf
         elif isinstance(frame, InterimTranscriptionFrame):
+            if frame.text and frame.text.strip():
+                self._session.user_spoke = True
             conf = transcription_confidence(frame)
             if frame.text and frame.text.strip():
                 logger.info(f"[STT interim] ({conf}) {frame.text!r}")

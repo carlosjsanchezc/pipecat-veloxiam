@@ -29,6 +29,8 @@ class CallSession:
         self.last_user_confidence: Optional[float] = None
         # PipelineWorker en ejecución (lo asigna pipeline.bridge.run_call).
         self.worker = None
+        # True cuando el usuario habla o hay STT; evita saludo TTS encima (WhatsApp).
+        self.user_spoke = False
 
     def add_turn(self, role: str, text: str, confidence: Optional[float] = None):
         self.transcript.append(

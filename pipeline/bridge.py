@@ -55,6 +55,7 @@ from pipeline.stt import (
     AudioOutputTap,
     PipelineErrorTap,
     TranscriptionTap,
+    UserSpeechTap,
     create_stt,
 )
 from pipeline.tts import create_tts
@@ -290,6 +291,7 @@ async def run_call(
             TranscriptionTap(session),
             PipelineErrorTap(),
             user_aggregator,
+            UserSpeechTap(session),
             agent,
             tts,
             AudioOutputTap(session.id),
@@ -324,10 +326,19 @@ async def run_call(
         )
         if greeting:
             async def _send_greeting():
-                await asyncio.sleep(1.0)
+                # Dejar que Deepgram abra el WS antes del TTS del saludo; si el
+                # usuario habla primero, no hablamos encima ni perdemos su audio.
+                await asyncio.sleep(2.5)
+                if getattr(session, "user_spoke", False):
+                    logger.info(
+                        f"[WebRTC] Usuario habló primero — omitiendo saludo "
+                        f"session={session.id}"
+                    )
+                    return
                 logger.info(f"[WebRTC] Encolando saludo TTS: {greeting!r}")
                 session.add_turn("assistant", greeting, None)
                 await worker.queue_frame(TTSSpeakFrame(greeting))
+
             asyncio.create_task(_send_greeting())
         else:
             logger.info(f"[WebRTC] Sin saludo; esperando que el usuario hable — session={session.id}")

@@ -29,5 +29,7 @@ def create_user_aggregator_params(vad: SileroVADAnalyzer) -> LLMUserAggregatorPa
     """Parámetros del agregador de usuario: VAD + timeout de cierre de turno."""
     return LLMUserAggregatorParams(
         vad_analyzer=vad,
-        user_turn_stop_timeout=3.0,
+        # Tras el STT final, cuánto esperar silencio antes de llamar al agente.
+        # 3 s se sentía "muerto"; 1 s es más natural en voz.
+        user_turn_stop_timeout=1.0,
     )
