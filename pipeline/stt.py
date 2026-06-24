@@ -73,7 +73,6 @@ def create_stt(
             # Cierra finales más rápido tras pausa breve (ms de silencio).
             endpointing=int(os.getenv("DEEPGRAM_ENDPOINTING_MS", "300")),
             utterance_end_ms=int(os.getenv("DEEPGRAM_UTTERANCE_END_MS", "1000")),
-            vad_events=True,
         ),
     )
 
