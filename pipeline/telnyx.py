@@ -106,7 +106,7 @@ async def run_telnyx_call(
         ),
     )
 
-    stt = create_stt(cfg, sample_rate=TELNYX_SAMPLE_RATE, telephony=True)
+    stt = create_stt(cfg, sample_rate=TELNYX_SAMPLE_RATE)
     tts = create_tts(cfg, sample_rate=TELNYX_SAMPLE_RATE)
     vad = create_vad_analyzer()
 
