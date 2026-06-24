@@ -50,6 +50,7 @@ from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
 from pipeline.config import BotConfig
+from pipeline.greeting import GreetingBargeInGate, GreetingCompleteTap, begin_greeting
 from pipeline.stt import (
     AudioInputTap,
     AudioOutputTap,
@@ -292,10 +293,12 @@ async def run_call(
             PipelineErrorTap(),
             user_aggregator,
             UserSpeechTap(session),
+            GreetingBargeInGate(session),
             agent,
             tts,
             AudioOutputTap(session.id),
             transport.output(),
+            GreetingCompleteTap(session),
             assistant_aggregator,
         ]
     )
@@ -338,6 +341,7 @@ async def run_call(
                     return
                 logger.info(f"[WebRTC] Encolando saludo TTS: {greeting!r}")
                 session.add_turn("assistant", greeting, None)
+                begin_greeting(session)
                 await worker.queue_frame(TTSSpeakFrame(greeting))
 
             asyncio.create_task(_send_greeting())

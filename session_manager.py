@@ -31,6 +31,9 @@ class CallSession:
         self.worker = None
         # True cuando el usuario habla o hay STT; evita saludo TTS encima (WhatsApp).
         self.user_spoke = False
+        # Saludo inicial: mientras True, no se propaga InterruptionFrame (VAD).
+        self.greeting_active = False
+        self.greeting_done = False
 
     def add_turn(self, role: str, text: str, confidence: Optional[float] = None):
         self.transcript.append(

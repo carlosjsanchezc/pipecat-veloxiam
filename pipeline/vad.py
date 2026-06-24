@@ -19,7 +19,7 @@ def create_vad_analyzer() -> SileroVADAnalyzer:
     """Crea el analizador Silero VAD afinado para conversación en español."""
     return SileroVADAnalyzer(
         params=VADParams(
-            confidence=0.55,
+            confidence=0.65,
             start_secs=0.15,  # reaccionar antes al habla (barge-in / turno)
             stop_secs=0.2,    # default Pipecat (requerido para turn detection + STT p99)
             min_volume=0.35,  # audio PSTN/WhatsApp suele llegar más bajo que mic de PC

@@ -43,6 +43,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from pipeline.bridge import NestJSAgentProcessor
 from pipeline.config import BotConfig
+from pipeline.greeting import GreetingBargeInGate, GreetingCompleteTap, begin_greeting
 from pipeline.stt import AudioInputTap, PipelineErrorTap, TranscriptionTap, create_stt
 from pipeline.tts import create_tts
 from pipeline.vad import create_user_aggregator_params, create_vad_analyzer
@@ -126,9 +127,11 @@ async def run_telnyx_call(
             TranscriptionTap(session),
             PipelineErrorTap(),
             user_aggregator,
+            GreetingBargeInGate(session),
             agent,
             tts,
             transport.output(),
+            GreetingCompleteTap(session),
             assistant_aggregator,
         ]
     )
@@ -157,11 +160,13 @@ async def run_telnyx_call(
             if cfg.is_ia_content:
                 # `greeting` es una instrucción: la IA genera el saludo y lo dice.
                 logger.info(f"[telnyx] Saludo IA desde instrucción: {greeting!r}")
+                begin_greeting(session)
                 await agent._respond(greeting)
             else:
                 # `greeting` se dice literal.
                 logger.info(f"[telnyx] Encolando saludo TTS: {greeting!r}")
                 session.add_turn("assistant", greeting, None)
+                begin_greeting(session)
                 await worker.queue_frame(TTSSpeakFrame(greeting))
 
         asyncio.create_task(_open())
