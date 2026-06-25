@@ -3,15 +3,7 @@
 Veloxiam negocia la llamada con Meta y pasa el SDP offer a ``POST /call/start``;
 ``main.py`` crea la ``SmallWebRTCConnection`` y arranca ``run_whatsapp_call``.
 
-Orden del pipeline::
-
-    transport.input()      audio entrante (Opus) de Meta
-      -> stt               Deepgram -> TranscriptionFrame
-      -> TranscriptionTap  registra texto + confidence
-      -> user_aggregator   VAD Silero (barge-in) + cierre de turno
-      -> NestJSAgentProcessor   POST llm-response -> LLMTextFrame
-      -> tts               Cartesia -> audio
-      -> transport.output()     audio saliente a Meta
+Audio a **16 kHz** en transporte, STT, TTS y Cartesia (config estable WebRTC).
 """
 
 import asyncio
@@ -24,7 +16,10 @@ from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMContextAggregatorPair,
+    LLMUserAggregatorParams,
+)
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -42,8 +37,9 @@ from pipeline.stt import (
     create_stt,
 )
 from pipeline.tts import create_tts
-from pipeline.vad import create_user_aggregator_params, create_vad_analyzer
+from pipeline.vad import create_whatsapp_vad_analyzer
 
+# WebRTC WhatsApp: 16 kHz en todo el pipeline (como la config original que funcionaba).
 WHATSAPP_SAMPLE_RATE = 16000
 
 
@@ -53,21 +49,18 @@ async def run_whatsapp_call(
     http: httpx.AsyncClient,
     cfg: BotConfig,
 ):
-    """Construye y ejecuta el pipeline WhatsApp/WebRTC para una llamada conectada.
-
-    Bloquea hasta desconexión o cancelación. Lanzar en segundo plano desde
-    ``POST /call/start``.
-    """
+    """Construye y ejecuta el pipeline WhatsApp/WebRTC para una llamada conectada."""
     llm_url = os.environ["LLM_RESPONSE_URL"]
     logger.info(
         f"[whatsapp] Construyendo pipeline — session={session.id} "
         f"stt_model={cfg.deepgram_model} tts_model={cfg.cartesia_model} "
-        f"voice={cfg.voice_id} lang={cfg.language} llm_url={llm_url}"
+        f"voice={cfg.voice_id} lang={cfg.language} sr={WHATSAPP_SAMPLE_RATE}"
     )
 
-    stt = create_stt(cfg, sample_rate=WHATSAPP_SAMPLE_RATE)
-    tts = create_tts(cfg, sample_rate=WHATSAPP_SAMPLE_RATE)
-    vad = create_vad_analyzer()
+    # STT/TTS sin sample_rate explícito: usan 16 kHz por defecto (create_stt/create_tts).
+    stt = create_stt(cfg)
+    tts = create_tts(cfg)
+    vad = create_whatsapp_vad_analyzer()
     logger.info(f"[whatsapp] STT/TTS/VAD creados — session={session.id}")
 
     transport = SmallWebRTCTransport(
@@ -83,7 +76,7 @@ async def run_whatsapp_call(
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
-        user_params=create_user_aggregator_params(vad),
+        user_params=LLMUserAggregatorParams(vad_analyzer=vad),
     )
 
     agent = NestJSAgentProcessor(session=session, http=http, llm_url=llm_url)
@@ -108,14 +101,8 @@ async def run_whatsapp_call(
     )
     logger.info(f"[whatsapp] Pipeline construido — session={session.id}")
 
-    worker = PipelineWorker(
-        pipeline,
-        params=PipelineParams(
-            enable_metrics=False,
-            audio_in_sample_rate=WHATSAPP_SAMPLE_RATE,
-            audio_out_sample_rate=WHATSAPP_SAMPLE_RATE,
-        ),
-    )
+    # Sin audio_in/out_sample_rate en PipelineWorker (igual que config original WebRTC).
+    worker = PipelineWorker(pipeline, params=PipelineParams(enable_metrics=False))
     session.worker = worker
 
     greeting = (cfg.greeting or "").strip()
@@ -138,7 +125,7 @@ async def run_whatsapp_call(
             return
 
         async def _send_greeting():
-            delay = float(os.getenv("GREETING_DELAY_SEC", "2.5"))
+            delay = float(os.getenv("GREETING_DELAY_SEC", "1.0"))
             await asyncio.sleep(delay)
             if getattr(session, "user_spoke", False):
                 logger.info(

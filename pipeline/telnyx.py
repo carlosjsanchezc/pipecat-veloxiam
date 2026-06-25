@@ -38,7 +38,7 @@ from pipeline.config import BotConfig
 from pipeline.greeting import GreetingBargeInGate, GreetingCompleteTap, begin_greeting
 from pipeline.stt import AudioInputTap, PipelineErrorTap, TranscriptionTap, create_stt
 from pipeline.tts import create_tts
-from pipeline.vad import create_user_aggregator_params, create_vad_analyzer
+from pipeline.vad import create_telnyx_vad_analyzer, create_user_aggregator_params
 
 TELNYX_SAMPLE_RATE = 8000
 
@@ -93,7 +93,7 @@ async def run_telnyx_call(
 
     stt = create_stt(cfg, sample_rate=TELNYX_SAMPLE_RATE)
     tts = create_tts(cfg, sample_rate=TELNYX_SAMPLE_RATE)
-    vad = create_vad_analyzer()
+    vad = create_telnyx_vad_analyzer()
     logger.info(f"[telnyx] STT/TTS/VAD creados — session={session.id}")
 
     context = LLMContext()
