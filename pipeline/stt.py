@@ -219,7 +219,7 @@ class TranscriptionTap(FrameProcessor):
             conf = transcription_confidence(frame)
             logger.info(f"[STT final] ({conf}) {frame.text!r}")
             # Guardamos el confidence de la última final para asociarlo al turno
-            # de usuario cuando el agregador cierre el turno (ver bridge.py).
+            # de usuario cuando el agregador cierre el turno (ver pipeline/agent.py).
             self._session.last_user_confidence = conf
         elif isinstance(frame, InterimTranscriptionFrame):
             if frame.text and frame.text.strip():

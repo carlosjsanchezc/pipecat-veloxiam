@@ -27,7 +27,7 @@ class CallSession:
         # Confidence de la última transcripción final del usuario (lo fija
         # TranscriptionTap y lo lee NestJSAgentProcessor al cerrar el turno).
         self.last_user_confidence: Optional[float] = None
-        # PipelineWorker en ejecución (lo asigna pipeline.bridge.run_call).
+        # PipelineWorker en ejecución (whatsapp.run_whatsapp_call o telnyx.run_telnyx_call).
         self.worker = None
         # True cuando el usuario habla o hay STT; evita saludo TTS encima (WhatsApp).
         self.user_spoke = False

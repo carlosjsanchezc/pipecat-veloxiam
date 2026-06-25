@@ -27,7 +27,7 @@ from loguru import logger
 from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConnection
 
-from pipeline.bridge import run_call
+from pipeline.whatsapp import run_whatsapp_call
 from pipeline.config import BotConfig
 from pipeline.telnyx import run_telnyx_call
 from session_manager import SessionManager
@@ -145,7 +145,7 @@ async def _run_and_cleanup(connection: SmallWebRTCConnection, session, cfg: BotC
         f"bot={cfg.bot_id} voice={cfg.voice_id} lang={cfg.language}"
     )
     try:
-        await run_call(connection, session, app.state.http, cfg)
+        await run_whatsapp_call(connection, session, app.state.http, cfg)
         logger.info(f"[pipeline] Terminó normalmente — session={session.id}")
     except Exception as e:  # noqa: BLE001
         logger.exception(f"[pipeline] Error inesperado — session={session.id}: {e}")

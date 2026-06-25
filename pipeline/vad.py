@@ -5,7 +5,7 @@ agregador de usuario (``LLMUserAggregatorParams(vad_analyzer=...)``). Ese
 agregador es quien, usando este VAD, emite ``UserStartedSpeakingFrame`` e
 ``InterruptionFrame`` cuando el usuario empieza a hablar mientras el bot habla.
 El servicio de TTS reacciona a ``InterruptionFrame`` cancelando el audio en
-curso automáticamente: ahí está el barge-in. Ver pipeline/bridge.py.
+curso automáticamente: ahí está el barge-in. Ver pipeline/whatsapp.py y pipeline/telnyx.py.
 """
 
 import os

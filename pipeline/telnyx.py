@@ -1,25 +1,17 @@
-"""Bridge Telnyx Media Streaming (WebSocket) <-> pipeline STT -> agente -> TTS.
+"""Pipeline de voz Telnyx PSTN vía WebSocket (FastAPIWebsocketTransport).
 
-Telefonía PSTN: a diferencia de WhatsApp (WebRTC vía Meta), aquí Telnyx se
-conecta DIRECTO a Pipecat por WebSocket. Veloxiam (NestJS) ya contestó la
-llamada y arrancó el streaming apuntando a ``{PIPECAT_URL}/telnyx``, pasando el
-contexto en la query: ``botId``, ``voiceId``, ``from``, ``to``, ``callId``
-(= call_control_id). Por eso aquí NO se toca la BD: el bot ya viene resuelto.
-
-El pipeline es el MISMO que el de WhatsApp (``pipeline.bridge``): solo cambia el
-transporte (FastAPIWebsocket + TelnyxFrameSerializer) y el sample rate (8000
-PCMU, telefonía). El "cerebro" sigue siendo ``POST /agent-voice/llm-response``.
+Telnyx se conecta directo a Pipecat; Veloxiam arranca el streaming hacia
+``WS /telnyx`` con ``botId``, ``voiceId``, ``callId``, etc. en la query.
 
 Orden del pipeline::
 
-    transport.input()      audio entrante (PCMU 8000) de Telnyx
+    transport.input()      audio entrante (PCMU 8 kHz) de Telnyx
       -> stt               Deepgram -> TranscriptionFrame
       -> TranscriptionTap  registra texto + confidence
-      -> user_aggregator   VAD (barge-in) + cierre de turno -> LLMContextFrame
-      -> NestJSAgentProcessor   POST a llm-response -> LLMTextFrame
-      -> tts               Cartesia (voiceId del bot) -> audio
+      -> user_aggregator   VAD Silero (barge-in) + cierre de turno
+      -> NestJSAgentProcessor   POST llm-response -> LLMTextFrame
+      -> tts               Cartesia -> audio
       -> transport.output()     audio saliente a Telnyx
-      -> assistant_aggregator   registra la respuesta en el contexto
 """
 
 import asyncio
@@ -41,15 +33,13 @@ from pipecat.transports.websocket.fastapi import (
 )
 from pipecat.workers.runner import WorkerRunner
 
-from pipeline.bridge import NestJSAgentProcessor
+from pipeline.agent import NestJSAgentProcessor
 from pipeline.config import BotConfig
 from pipeline.greeting import GreetingBargeInGate, GreetingCompleteTap, begin_greeting
 from pipeline.stt import AudioInputTap, PipelineErrorTap, TranscriptionTap, create_stt
 from pipeline.tts import create_tts
 from pipeline.vad import create_user_aggregator_params, create_vad_analyzer
 
-# Telefonía: PCMU (g711 µ-law) a 8 kHz. Coincide con el streaming_start de NestJS
-# (stream_bidirectional_codec=PCMU) y con el default del TelnyxFrameSerializer.
 TELNYX_SAMPLE_RATE = 8000
 
 
@@ -61,34 +51,28 @@ async def run_telnyx_call(
     call_control_id: str,
     telnyx_api_key: str | None = None,
 ):
-    """Construye y ejecuta el pipeline sobre una conexión WebSocket de Telnyx.
+    """Construye y ejecuta el pipeline Telnyx sobre una conexión WebSocket.
 
-    Bloquea hasta que la llamada termina (stop de Telnyx, cuelgue o cancelación).
+    Bloquea hasta stop de Telnyx, cuelgue o cancelación.
     """
     llm_url = os.environ["LLM_RESPONSE_URL"]
 
-    # Telnyx abre el WS y manda primero "connected" y luego "start" (stream_id +
-    # media_format.encoding). Los leemos antes de montar el transporte; este
-    # seguirá leyendo desde los frames "media".
     start = await _read_telnyx_start(websocket)
     if not start:
         logger.error(f"[telnyx] No se recibió evento start — abortando session={session.id}")
         return
 
     logger.info(
-        f"[run_telnyx_call] session={session.id} stream_id={start['stream_id']} "
-        f"encoding={start['outbound_encoding']} call_control_id={call_control_id} "
-        f"voice={cfg.voice_id} lang={cfg.language}"
+        f"[telnyx] Construyendo pipeline — session={session.id} "
+        f"stream_id={start['stream_id']} encoding={start['outbound_encoding']} "
+        f"call_control_id={call_control_id} voice={cfg.voice_id} lang={cfg.language} "
+        f"llm_url={llm_url}"
     )
 
     serializer = TelnyxFrameSerializer(
         stream_id=start["stream_id"],
         outbound_encoding=start["outbound_encoding"],
         inbound_encoding=start["inbound_encoding"],
-        # call_control_id + api_key (la del bot, vía query) permiten que el
-        # serializer cuelgue la llamada en Telnyx automáticamente al terminar el
-        # pipeline. Multi-bot: cada bot tiene su propia key. Si no llega, Telnyx
-        # cuelga igual cuando el llamante corta.
         call_control_id=call_control_id or None,
         api_key=telnyx_api_key or os.getenv("TELNYX_API_KEY") or None,
         params=TelnyxFrameSerializer.InputParams(
@@ -110,6 +94,7 @@ async def run_telnyx_call(
     stt = create_stt(cfg, sample_rate=TELNYX_SAMPLE_RATE)
     tts = create_tts(cfg, sample_rate=TELNYX_SAMPLE_RATE)
     vad = create_vad_analyzer()
+    logger.info(f"[telnyx] STT/TTS/VAD creados — session={session.id}")
 
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
@@ -135,6 +120,7 @@ async def run_telnyx_call(
             assistant_aggregator,
         ]
     )
+    logger.info(f"[telnyx] Pipeline construido — session={session.id}")
 
     worker = PipelineWorker(
         pipeline,
@@ -147,6 +133,8 @@ async def run_telnyx_call(
     session.worker = worker
 
     greeting = (cfg.greeting or "").strip()
+    if greeting:
+        logger.info(f"[telnyx] Saludo configurado: {greeting!r} — session={session.id}")
 
     @transport.event_handler("on_client_connected")
     async def _on_connected(_transport, _client):
@@ -154,44 +142,38 @@ async def run_telnyx_call(
         if not greeting:
             return
 
-        async def _open():
+        async def _send_greeting():
             delay = float(os.getenv("TELNYX_GREETING_DELAY_SEC", "0.5"))
             await asyncio.sleep(delay)
             if cfg.is_ia_content:
-                # `greeting` es una instrucción: la IA genera el saludo y lo dice.
                 logger.info(f"[telnyx] Saludo IA desde instrucción: {greeting!r}")
                 begin_greeting(session)
                 await agent._respond(greeting)
             else:
-                # `greeting` se dice literal.
                 logger.info(f"[telnyx] Encolando saludo TTS: {greeting!r}")
                 session.add_turn("assistant", greeting, None)
                 begin_greeting(session)
                 await worker.queue_frame(TTSSpeakFrame(greeting))
 
-        asyncio.create_task(_open())
+        asyncio.create_task(_send_greeting())
 
     @transport.event_handler("on_client_disconnected")
     async def _on_disconnected(_transport, _client):
         logger.info(f"[telnyx] Cliente desconectado — session={session.id}")
         await worker.cancel(reason="client disconnected")
 
-    logger.info(f"[run_telnyx_call] Lanzando WorkerRunner — session={session.id}")
+    logger.info(f"[telnyx] Lanzando WorkerRunner — session={session.id}")
     runner = WorkerRunner()
     try:
         await runner.run(worker)
     finally:
-        logger.info(f"[run_telnyx_call] WorkerRunner finalizado — session={session.id}")
+        logger.info(f"[telnyx] WorkerRunner finalizado — session={session.id}")
 
 
 async def _read_telnyx_start(websocket: WebSocket) -> dict | None:
-    """Lee los primeros eventos del WS de Telnyx hasta obtener el evento ``start``.
-
-    Telnyx envía ``{"event":"connected"}`` y luego ``{"event":"start", ...}`` con
-    ``stream_id`` y ``start.media_format.encoding`` (p. ej. PCMU).
-    """
+    """Lee eventos iniciales del WS de Telnyx hasta obtener ``start``."""
     default_encoding = "PCMU"
-    for _ in range(5):  # tolera algún evento extra antes del "start"
+    for _ in range(5):
         try:
             raw = await websocket.receive_text()
         except Exception as e:  # noqa: BLE001
