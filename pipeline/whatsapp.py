@@ -16,10 +16,7 @@ from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import (
-    LLMContextAggregatorPair,
-    LLMUserAggregatorParams,
-)
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
@@ -37,7 +34,7 @@ from pipeline.stt import (
     create_stt,
 )
 from pipeline.tts import create_tts
-from pipeline.vad import create_whatsapp_vad_analyzer
+from pipeline.vad import create_user_aggregator_params, create_whatsapp_vad_analyzer
 
 # WebRTC WhatsApp: 16 kHz en todo el pipeline (como la config original que funcionaba).
 WHATSAPP_SAMPLE_RATE = 16000
@@ -61,7 +58,7 @@ async def run_whatsapp_call(
     stt = create_stt(cfg)
     tts = create_tts(cfg)
     vad = create_whatsapp_vad_analyzer()
-    logger.info(f"[whatsapp] STT/TTS/VAD creados — session={session.id}")
+    logger.info(f"[whatsapp] STT/TTS/VAD/SmartTurn creados — session={session.id}")
 
     transport = SmallWebRTCTransport(
         webrtc_connection=connection,
@@ -76,7 +73,7 @@ async def run_whatsapp_call(
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(vad_analyzer=vad),
+        user_params=create_user_aggregator_params(vad),
     )
 
     agent = NestJSAgentProcessor(session=session, http=http, llm_url=llm_url)

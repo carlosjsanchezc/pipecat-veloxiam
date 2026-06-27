@@ -94,7 +94,7 @@ async def run_telnyx_call(
     stt = create_stt(cfg, sample_rate=TELNYX_SAMPLE_RATE)
     tts = create_tts(cfg, sample_rate=TELNYX_SAMPLE_RATE)
     vad = create_telnyx_vad_analyzer()
-    logger.info(f"[telnyx] STT/TTS/VAD creados — session={session.id}")
+    logger.info(f"[telnyx] STT/TTS/VAD/SmartTurn creados — session={session.id}")
 
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
