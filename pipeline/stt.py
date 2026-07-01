@@ -86,7 +86,7 @@ def transcription_confidence(frame: Frame) -> Optional[float]:
 class AudioInputTap(FrameProcessor):
     """Observa audio crudo del transporte para diagnosticar si WebRTC envía media."""
 
-    _SPEECH_RMS = 1500  # umbral aprox. de voz en PCM s16le
+    _SPEECH_RMS = 3500  # umbral aprox. de voz en PCM s16le
 
     def __init__(self, session_id: str, **kwargs):
         super().__init__(**kwargs)
