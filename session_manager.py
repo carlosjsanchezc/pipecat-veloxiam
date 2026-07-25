@@ -34,6 +34,10 @@ class CallSession:
         # Saludo inicial: mientras True, no se propaga InterruptionFrame (VAD).
         self.greeting_active = False
         self.greeting_done = False
+        # Liberación tras transfer/end_call de Veloxiam (pipeline/release.py).
+        self.released = False
+        self.release_pending = False
+        self.release_reason = ""
 
     def add_turn(self, role: str, text: str, confidence: Optional[float] = None):
         self.transcript.append(

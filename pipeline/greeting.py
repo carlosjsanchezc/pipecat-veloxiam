@@ -48,11 +48,17 @@ class GreetingBargeInGate(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, InterruptionFrame) and getattr(
-            self._session, "greeting_active", False
+        if isinstance(frame, InterruptionFrame) and (
+            getattr(self._session, "greeting_active", False)
+            or getattr(self._session, "release_pending", False)
         ):
+            why = (
+                "despedida/release"
+                if getattr(self._session, "release_pending", False)
+                else "saludo"
+            )
             logger.info(
-                f"[greeting] Barge-in ignorado durante saludo — session={self._session.id}"
+                f"[greeting] Barge-in ignorado durante {why} — session={self._session.id}"
             )
             return
 

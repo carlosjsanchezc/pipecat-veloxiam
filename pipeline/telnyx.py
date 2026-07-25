@@ -36,6 +36,7 @@ from pipecat.workers.runner import WorkerRunner
 from pipeline.agent import NestJSAgentProcessor
 from pipeline.config import BotConfig
 from pipeline.greeting import GreetingBargeInGate, GreetingCompleteTap, begin_greeting
+from pipeline.release import CallReleaseTap
 from pipeline.stt import AudioInputTap, PipelineErrorTap, TranscriptionTap, create_stt
 from pipeline.tts import create_tts
 from pipeline.vad import create_telnyx_vad_analyzer, create_user_aggregator_params
@@ -78,6 +79,9 @@ async def run_telnyx_call(
         params=TelnyxFrameSerializer.InputParams(
             telnyx_sample_rate=TELNYX_SAMPLE_RATE,
             sample_rate=TELNYX_SAMPLE_RATE,
+            # Veloxiam controla transfer/hangup. Si Pipecat cuelga al cancelar
+            # el worker tras un transfer, corta la llamada transferida.
+            auto_hang_up=False,
         ),
     )
 
@@ -117,6 +121,7 @@ async def run_telnyx_call(
             tts,
             transport.output(),
             GreetingCompleteTap(session),
+            CallReleaseTap(session),
             assistant_aggregator,
         ]
     )

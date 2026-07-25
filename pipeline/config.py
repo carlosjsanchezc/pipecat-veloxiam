@@ -15,7 +15,7 @@ class BotConfig:
     voice_id: str
     language: str = "es"
     cartesia_model: str = "sonic-3.5"
-    deepgram_model: str = "nova-2-general"
+    deepgram_model: str = "nova-2-phonecall"
     tenant_id: str = "default"
     greeting: str = ""
     # Outbound: si True, `greeting` es una instrucción para que la IA genere el

@@ -25,6 +25,7 @@ from pipecat.workers.runner import WorkerRunner
 from pipeline.agent import NestJSAgentProcessor
 from pipeline.config import BotConfig
 from pipeline.greeting import GreetingBargeInGate, GreetingCompleteTap, begin_greeting
+from pipeline.release import CallReleaseTap
 from pipeline.stt import (
     AudioInputTap,
     AudioOutputTap,
@@ -93,6 +94,7 @@ async def run_whatsapp_call(
             AudioOutputTap(session.id),
             transport.output(),
             GreetingCompleteTap(session),
+            CallReleaseTap(session),
             assistant_aggregator,
         ]
     )
