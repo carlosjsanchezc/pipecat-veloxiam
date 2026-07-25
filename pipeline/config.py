@@ -16,7 +16,7 @@ class BotConfig:
     language: str = "es"
     cartesia_model: str = "sonic-3.5"
     # nova-2-phonecall solo soporta en/en-US; para español usar nova-2-general.
-    deepgram_model: str = "nova-2-general"
+    deepgram_model: str = "nova-3"
     tenant_id: str = "default"
     greeting: str = ""
     # Outbound: si True, `greeting` es una instrucción para que la IA genere el
