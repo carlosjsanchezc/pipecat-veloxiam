@@ -165,6 +165,8 @@ async def run_telnyx_call(
     @transport.event_handler("on_client_disconnected")
     async def _on_disconnected(_transport, _client):
         logger.info(f"[telnyx] Cliente desconectado — session={session.id}")
+        session.disconnected = True
+        session.released = True
         await worker.cancel(reason="client disconnected")
 
     logger.info(f"[telnyx] Lanzando WorkerRunner — session={session.id}")

@@ -29,6 +29,9 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipeline.release import begin_release
 
 _PLACEHOLDER_RE = re.compile(r"//[^/]+//")
+# Tags tipo Cartesia/Veloxiam que no deben sintetizarse.
+_EMOTION_TAG_RE = re.compile(r"<emotion\b[^>]*/?>", re.IGNORECASE)
+_XML_TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
 
 # Acciones de Veloxiam que deben cortar el pipeline de voz.
 _TRANSFER_ACTIONS = frozenset(
@@ -71,9 +74,20 @@ def _latest_user_text(context: LLMContext) -> Optional[str]:
 
 
 def _clean_tts_text(text: str) -> Optional[str]:
-    """Elimina placeholders tipo //logo// que no deben sintetizarse."""
-    cleaned = _PLACEHOLDER_RE.sub("", text).strip()
+    """Elimina placeholders y tags XML (p. ej. emotion) que no deben sintetizarse."""
+    cleaned = _PLACEHOLDER_RE.sub("", text)
+    cleaned = _EMOTION_TAG_RE.sub("", cleaned)
+    cleaned = _XML_TAG_RE.sub("", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned or None
+
+
+def _session_is_dead(session) -> bool:
+    """True si ya no debemos hablar (transfer, hangup o transporte cerrado)."""
+    return bool(
+        getattr(session, "released", False)
+        or getattr(session, "disconnected", False)
+    )
 
 
 def _normalize_release_action(action: Optional[str]) -> Optional[str]:
@@ -159,11 +173,11 @@ class NestJSAgentProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
     async def _on_user_turn(self, context: LLMContext):
-        if getattr(self._session, "released", False) or getattr(
+        if _session_is_dead(self._session) or getattr(
             self._session, "release_pending", False
         ):
             logger.info(
-                f"[agent] Turno ignorado — pipeline en liberación "
+                f"[agent] Turno ignorado — pipeline en liberación/desconexión "
                 f"session={self._session.id}"
             )
             return
@@ -219,7 +233,12 @@ class NestJSAgentProcessor(FrameProcessor):
             reply = "Lo siento, tuve un problema. ¿Puedes repetirlo?"
             action = None
 
-        if getattr(self._session, "released", False):
+        # Tras transfer Telnyx suele cortar el WS antes de que llegue llm-response.
+        if _session_is_dead(self._session):
+            logger.info(
+                f"[agent] Respuesta descartada — transporte cerrado "
+                f"session={self._session.id} action={action}"
+            )
             return
 
         # Marcar liberación antes del TTS para ignorar barge-in durante la despedida.

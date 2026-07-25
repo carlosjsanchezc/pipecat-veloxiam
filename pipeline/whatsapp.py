@@ -142,6 +142,8 @@ async def run_whatsapp_call(
     @transport.event_handler("on_client_disconnected")
     async def _on_disconnected(_transport, _client):
         logger.info(f"[whatsapp] Cliente desconectado — session={session.id}")
+        session.disconnected = True
+        session.released = True
         await worker.cancel(reason="client disconnected")
 
     logger.info(f"[whatsapp] Lanzando WorkerRunner — session={session.id}")

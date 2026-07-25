@@ -38,6 +38,8 @@ class CallSession:
         self.released = False
         self.release_pending = False
         self.release_reason = ""
+        # True cuando el transporte (WS/WebRTC) ya se cerró.
+        self.disconnected = False
 
     def add_turn(self, role: str, text: str, confidence: Optional[float] = None):
         self.transcript.append(

@@ -156,11 +156,20 @@ async def _run_and_cleanup(connection: SmallWebRTCConnection, session, cfg: BotC
 
 @app.post("/call/terminate")
 async def terminate_call(data: dict):
-    """Cierra la llamada por callId y envía el transcript."""
-    call_id = data.get("callId")
+    """Cierra la llamada por callId y envía el transcript.
+
+    Idempotente: si la sesión ya se cerró (p. ej. WS Telnyx cayó tras transfer),
+    responde 200.
+    """
+    call_id = data.get("callId") or data.get("call_id") or data.get("id")
     if not call_id:
+        logger.warning(f"[terminate] body sin callId: {data!r}")
         raise HTTPException(status_code=400, detail="callId requerido")
-    await app.state.sessions.terminate(call_id)
+    sessions: SessionManager = app.state.sessions
+    if sessions.get(call_id) is None:
+        logger.info(f"[terminate] Sesión ya inexistente call_id={call_id}")
+        return {"status": "already_terminated"}
+    await sessions.terminate(call_id)
     return {"status": "terminated"}
 
 
