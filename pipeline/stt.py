@@ -36,14 +36,47 @@ from pipeline.config import BotConfig
 from pipeline.lang import to_language
 
 
+# Modelos Deepgram solo-inglés. Con language=es Deepgram responde HTTP 400.
+_ENGLISH_ONLY_MODELS = frozenset(
+    {
+        "nova-2-phonecall",
+        "nova-2-meeting",
+        "nova-2-finance",
+        "nova-2-conversationalai",
+        "nova-2-voicemail",
+        "nova-2-video",
+        "nova-2-medical",
+        "nova-2-drivethru",
+        "nova-2-automotive",
+        "nova-2-atc",
+        "nova-phonecall",
+        "nova-medical",
+    }
+)
+
+
+def _resolve_deepgram_model(model: str, language) -> str:
+    """Evita model+idioma incompatibles (p. ej. nova-2-phonecall + es → HTTP 400)."""
+    lang = str(language).lower().replace("_", "-")
+    is_english = lang == "en" or lang.startswith("en-")
+    if not is_english and model in _ENGLISH_ONLY_MODELS:
+        logger.warning(
+            f"[Deepgram] model={model} no soporta lang={language}; "
+            f"usando nova-2-general"
+        )
+        return "nova-2-general"
+    return model
+
+
 def create_stt(cfg: BotConfig, sample_rate: int = 16000) -> DeepgramSTTService:
     """Crea el servicio Deepgram STT en streaming, con el idioma/modelo del bot.
 
     ``sample_rate`` por defecto 16000 (WhatsApp/WebRTC). Telefonía Telnyx usa 8000.
     """
     language = to_language(cfg.language)
+    model = _resolve_deepgram_model(cfg.deepgram_model, language)
     logger.info(
-        f"[Deepgram] STT init — bot_id={cfg.bot_id} model={cfg.deepgram_model} "
+        f"[Deepgram] STT init — bot_id={cfg.bot_id} model={model} "
         f"lang={language} sample_rate={sample_rate}"
     )
 
@@ -51,7 +84,7 @@ def create_stt(cfg: BotConfig, sample_rate: int = 16000) -> DeepgramSTTService:
         api_key=os.environ["DEEPGRAM_API_KEY"],
         sample_rate=sample_rate,
         settings=DeepgramSTTService.Settings(
-            model=cfg.deepgram_model,
+            model=model,
             language=language,
             interim_results=True,
             smart_format=True,

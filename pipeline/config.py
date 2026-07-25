@@ -15,7 +15,8 @@ class BotConfig:
     voice_id: str
     language: str = "es"
     cartesia_model: str = "sonic-3.5"
-    deepgram_model: str = "nova-2-phonecall"
+    # nova-2-phonecall solo soporta en/en-US; para español usar nova-2-general.
+    deepgram_model: str = "nova-2-general"
     tenant_id: str = "default"
     greeting: str = ""
     # Outbound: si True, `greeting` es una instrucción para que la IA genere el
@@ -33,7 +34,8 @@ class BotConfig:
             language=data.get("language", "es"),
             cartesia_model=data.get("cartesiaModel", os.getenv("CARTESIA_MODEL", "sonic-3.5")),
             deepgram_model=data.get(
-                "deepgramModel", os.getenv("DEEPGRAM_MODEL", "nova-2-general")
+                "deepgramModel",
+                os.getenv("DEEPGRAM_MODEL", "nova-2-general"),
             ),
             tenant_id=data.get("tenantId", "default"),
             greeting=data.get("greeting", "Hola, ¿cómo estás?"),
