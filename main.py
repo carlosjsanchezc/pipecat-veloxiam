@@ -214,10 +214,33 @@ async def telnyx_stream(websocket: WebSocket):
     call_id = q.get("callId") or ""  # = call_control_id
     is_ia_content = q.get("isIaContent") == "1"  # outbound: greeting generado por IA
     chat_id = q.get("chatId") or ""
+    # Pata humana tras transfer: no levantar STT/TTS (Veloxiam no debe streamear al bot).
+    disable_bot = (
+        q.get("disableBot") in ("1", "true", "yes")
+        or q.get("botEnabled") == "0"
+        or (q.get("mode") or "").lower() in ("human", "transfer_leg", "bridge")
+    )
 
     if not bot_id or not voice_id:
         logger.error(f"[telnyx] WS sin botId/voiceId (q={dict(q)}) — cerrando")
         await websocket.close(code=1008)
+        return
+
+    if disable_bot:
+        logger.warning(
+            f"[telnyx] disableBot=1 — NO se inicia pipeline de voz "
+            f"(pata humana). Preferible no abrir /telnyx tras transfer. "
+            f"callId={call_id} from={q.get('from')}"
+        )
+        try:
+            while True:
+                message = await websocket.receive()
+                if message.get("type") == "websocket.disconnect":
+                    break
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            logger.info(f"[telnyx] WS disableBot cerrado callId={call_id}")
         return
 
     sessions: SessionManager = app.state.sessions

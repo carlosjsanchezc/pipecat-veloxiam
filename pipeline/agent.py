@@ -44,15 +44,27 @@ _END_ACTIONS = frozenset(
 # Si Veloxiam no manda ``action`` pero el texto es claramente una despedida de transfer.
 _REPLY_TRANSFER_RE = re.compile(
     r"(?i)("
-    r"te paso|"
-    r"te transfiero|"
+    r"te (estoy )?(paso|pasando|transfiero|transfiriendo|conectando|enviando)|"
     r"transfiri\w*|"
     r"transferir\w*|"
     r"te conecto|"
     r"pasar(te|lo)? con|"
     r"solicitud para transfer|"
     r"transferirte|"
-    r"paso a \w+"
+    r"paso a \w+|"
+    r"comunic(o|arte) con"
+    r")"
+)
+
+# Pedido del usuario de hablar con alguien / transferir.
+_USER_TRANSFER_RE = re.compile(
+    r"(?i)("
+    r"transfer\w*|"
+    r"comun[ií]que\w*|"
+    r"pas[aá]me|"
+    r"quiero (hablar )?con|"
+    r"hable con|"
+    r"con (un )?(agente|asesor|humano|operador)"
     r")"
 )
 
@@ -230,6 +242,12 @@ class NestJSAgentProcessor(FrameProcessor):
         conf_pct = f"{confidence * 100:.0f}%" if confidence is not None else "?"
         logger.info(f"[STT→usuario] {user_text!r}  conf={conf_pct}")
 
+        if _USER_TRANSFER_RE.search(user_text):
+            self._session.expect_transfer = True
+            logger.info(
+                f"[agent] Pedido de transfer detectado — session={self._session.id}"
+            )
+
         await self._cancel_pending()
         self._pending = self.create_task(self._respond(user_text))
 
@@ -238,6 +256,17 @@ class NestJSAgentProcessor(FrameProcessor):
         action: Optional[str] = None
         try:
             reply, action, http_status = await self._call_veloxiam(user_text)
+            # Si el usuario pidió transfer y Veloxiam no mandó action, igual liberamos.
+            if (
+                action is None
+                and getattr(self._session, "expect_transfer", False)
+                and reply
+            ):
+                action = "transfer"
+                logger.info(
+                    f"[agent] action=transfer inferida por pedido del usuario "
+                    f"session={self._session.id}"
+                )
             llm_ms = (time.perf_counter() - t0) * 1000
             action_log = f" action={action}" if action else ""
             if reply:
@@ -277,14 +306,13 @@ class NestJSAgentProcessor(FrameProcessor):
         if _session_is_dead(self._session):
             logger.info(
                 f"[agent] Respuesta descartada — transporte cerrado "
-                f"session={self._session.id} action={action}"
+                f"session={self._session.id} action={action} reply={reply!r}"
             )
-            if action:
-                logger.warning(
-                    f"[agent] Transfer/end sin despedida audible: Veloxiam debe "
-                    f"devolver action+texto y transferir DESPUÉS del TTS "
-                    f"(session={self._session.id})"
-                )
+            logger.warning(
+                "[agent] Veloxiam transfirió ANTES de que Pipecat pudiera despedirse. "
+                "Orden correcto: 1) responder llm-response con texto+action=transfer "
+                "2) esperar ~3s (TTS) 3) transferir y NO abrir otro /telnyx al bot"
+            )
             return
 
         reply = _ensure_farewell(reply, action)
