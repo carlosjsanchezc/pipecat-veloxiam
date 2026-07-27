@@ -21,7 +21,7 @@ def begin_release(session, reason: str, *, wait_for_speech: bool) -> None:
     session.release_reason = reason
     if wait_for_speech:
         session.release_pending = True
-        max_sec = float(os.getenv("RELEASE_MAX_SEC", "30"))
+        max_sec = float(os.getenv("RELEASE_MAX_SEC", "15"))
         asyncio.create_task(_release_watchdog(session, max_sec))
         logger.info(
             f"[release] Esperando fin de TTS antes de liberar "

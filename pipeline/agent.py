@@ -35,12 +35,31 @@ _XML_TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
 
 # Acciones de Veloxiam que deben cortar el pipeline de voz.
 _TRANSFER_ACTIONS = frozenset(
-    {"transfer", "transfer_call", "call_transfer", "redirect"}
+    {"transfer", "transfer_call", "call_transfer", "redirect", "transferring", "transferred"}
 )
 _END_ACTIONS = frozenset(
     {"end", "end_call", "hangup", "hang_up", "disconnect", "close"}
 )
-_RELEASE_ACTIONS = _TRANSFER_ACTIONS | _END_ACTIONS
+
+# Si Veloxiam no manda ``action`` pero el texto es claramente una despedida de transfer.
+_REPLY_TRANSFER_RE = re.compile(
+    r"(?i)("
+    r"te paso|"
+    r"te transfiero|"
+    r"transfiri\w*|"
+    r"transferir\w*|"
+    r"te conecto|"
+    r"pasar(te|lo)? con|"
+    r"solicitud para transfer|"
+    r"transferirte|"
+    r"paso a \w+"
+    r")"
+)
+
+_DEFAULT_FAREWELL = {
+    "transfer": "Claro, te transfiero en este momento.",
+    "end_call": "Gracias por llamar. Hasta luego.",
+}
 
 
 def _content_to_text(content: Any) -> str:
@@ -111,14 +130,21 @@ def _parse_veloxiam_body(data: Any) -> tuple[Optional[str], Optional[str]]:
         {"reply": "Adiós", "action": "end_call"}
         {"text": "…", "transfer": true}
         {"message": "…", "endCall": true}
+
+    Si no hay ``action`` pero el texto habla de transferir, se infiere ``transfer``.
     """
     if isinstance(data, str):
-        return _clean_tts_text(data), None
+        reply = _clean_tts_text(data)
+        action = "transfer" if reply and _REPLY_TRANSFER_RE.search(reply) else None
+        return reply, action
 
     if not isinstance(data, dict):
         return None, None
 
     raw = data.get("text") or data.get("reply") or data.get("message")
+    if raw is None and isinstance(data.get("data"), dict):
+        nested = data["data"]
+        raw = nested.get("text") or nested.get("reply") or nested.get("message")
     reply = _clean_tts_text(raw) if isinstance(raw, str) else None
 
     action = _normalize_release_action(
@@ -126,6 +152,8 @@ def _parse_veloxiam_body(data: Any) -> tuple[Optional[str], Optional[str]]:
     )
     if action is None and isinstance(data.get("type"), str):
         action = _normalize_release_action(data["type"])
+    if action is None and isinstance(data.get("status"), str):
+        action = _normalize_release_action(data["status"])
 
     if action is None:
         if data.get("transfer") or data.get("shouldTransfer") or data.get("transferCall"):
@@ -138,7 +166,19 @@ def _parse_veloxiam_body(data: Any) -> tuple[Optional[str], Optional[str]]:
         ):
             action = "end_call"
 
+    if action is None and reply and _REPLY_TRANSFER_RE.search(reply):
+        action = "transfer"
+
     return reply, action
+
+
+def _ensure_farewell(reply: Optional[str], action: Optional[str]) -> Optional[str]:
+    """Garantiza texto de despedida cuando hay transfer/end_call sin reply útil."""
+    if reply:
+        return reply
+    if action and action in _DEFAULT_FAREWELL:
+        return _DEFAULT_FAREWELL[action]
+    return None
 
 
 class NestJSAgentProcessor(FrameProcessor):
@@ -233,16 +273,28 @@ class NestJSAgentProcessor(FrameProcessor):
             reply = "Lo siento, tuve un problema. ¿Puedes repetirlo?"
             action = None
 
-        # Tras transfer Telnyx suele cortar el WS antes de que llegue llm-response.
+        # Tras transfer Telnyx a veces corta el WS antes de llm-response.
         if _session_is_dead(self._session):
             logger.info(
                 f"[agent] Respuesta descartada — transporte cerrado "
                 f"session={self._session.id} action={action}"
             )
+            if action:
+                logger.warning(
+                    f"[agent] Transfer/end sin despedida audible: Veloxiam debe "
+                    f"devolver action+texto y transferir DESPUÉS del TTS "
+                    f"(session={self._session.id})"
+                )
             return
 
-        # Marcar liberación antes del TTS para ignorar barge-in durante la despedida.
+        reply = _ensure_farewell(reply, action)
+
+        # Liberar tras despedida para que el bot no siga hablando en la llamada transferida.
         if action:
+            logger.info(
+                f"[agent] Liberación programada action={action} "
+                f"farewell={bool(reply)} session={self._session.id}"
+            )
             begin_release(self._session, action, wait_for_speech=bool(reply))
 
         if reply:
@@ -254,6 +306,11 @@ class NestJSAgentProcessor(FrameProcessor):
             tts_queue_ms = (time.perf_counter() - t1) * 1000
             logger.info(
                 f"[TTS] encolado en {tts_queue_ms:.0f}ms — session={self._session.id}"
+            )
+        elif action:
+            logger.info(
+                f"[agent] Sin texto de despedida — liberando ya "
+                f"action={action} session={self._session.id}"
             )
 
     async def _call_veloxiam(
