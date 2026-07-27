@@ -133,25 +133,22 @@ def _normalize_release_action(action: Optional[str]) -> Optional[str]:
     return None
 
 
-def _parse_veloxiam_body(data: Any) -> tuple[Optional[str], Optional[str]]:
-    """Extrae (texto TTS, action de liberación) del JSON de llm-response.
+def _parse_veloxiam_body(data: Any) -> tuple[Optional[str], Optional[str], dict]:
+    """Extrae (texto TTS, action, meta extra) del JSON de llm-response.
 
-    Contrato Veloxiam (ejemplos)::
+    Contrato Veloxiam::
 
-        {"text": "Te transfiero…", "action": "transfer"}
-        {"reply": "Adiós", "action": "end_call"}
-        {"text": "…", "transfer": true}
-        {"message": "…", "endCall": true}
-
-    Si no hay ``action`` pero el texto habla de transferir, se infiere ``transfer``.
+        {"text": "…", "action": "transfer"}   # NO transferir aún en Telnyx
+        # Tras la despedida TTS, Pipecat POSTea TRANSFER_EXECUTE_URL y ahí sí ring.
     """
+    meta: dict = {}
     if isinstance(data, str):
         reply = _clean_tts_text(data)
         action = "transfer" if reply and _REPLY_TRANSFER_RE.search(reply) else None
-        return reply, action
+        return reply, action, meta
 
     if not isinstance(data, dict):
-        return None, None
+        return None, None, meta
 
     raw = data.get("text") or data.get("reply") or data.get("message")
     if raw is None and isinstance(data.get("data"), dict):
@@ -181,11 +178,21 @@ def _parse_veloxiam_body(data: Any) -> tuple[Optional[str], Optional[str]]:
     if action is None and reply and _REPLY_TRANSFER_RE.search(reply):
         action = "transfer"
 
-    return reply, action
+    # Metadatos útiles para transfer-execute (destino, etc.).
+    for key in ("target", "destination", "to", "transferTo", "agentId", "agentName"):
+        if key in data and data[key] is not None:
+            meta[key] = data[key]
+
+    return reply, action, meta
 
 
 def _ensure_farewell(reply: Optional[str], action: Optional[str]) -> Optional[str]:
-    """Garantiza texto de despedida cuando hay transfer/end_call sin reply útil."""
+    """Despedida hablada por Pipecat. En transfer siempre hay texto (default si falta)."""
+    if action == "transfer":
+        # La despedida la dice Pipecat aquí; el ring lo dispara Veloxiam después del TTS.
+        if reply and _REPLY_TRANSFER_RE.search(reply):
+            return reply
+        return _DEFAULT_FAREWELL["transfer"]
     if reply:
         return reply
     if action and action in _DEFAULT_FAREWELL:
@@ -203,6 +210,8 @@ class NestJSAgentProcessor(FrameProcessor):
         self._http = http
         self._llm_url = llm_url
         self._pending = None
+        # Para que release.py pueda avisar transfer-execute tras la despedida.
+        session.http_client = http
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -255,7 +264,7 @@ class NestJSAgentProcessor(FrameProcessor):
         t0 = time.perf_counter()
         action: Optional[str] = None
         try:
-            reply, action, http_status = await self._call_veloxiam(user_text)
+            reply, action, meta, http_status = await self._call_veloxiam(user_text)
             # Si el usuario pidió transfer y Veloxiam no mandó action, igual liberamos.
             if (
                 action is None
@@ -294,6 +303,7 @@ class NestJSAgentProcessor(FrameProcessor):
             )
             reply = "Lo siento, tuve un problema. ¿Puedes repetirlo?"
             action = None
+            meta = {}
         except Exception as e:  # noqa: BLE001
             llm_ms = (time.perf_counter() - t0) * 1000
             logger.exception(
@@ -301,28 +311,33 @@ class NestJSAgentProcessor(FrameProcessor):
             )
             reply = "Lo siento, tuve un problema. ¿Puedes repetirlo?"
             action = None
+            meta = {}
 
-        # Tras transfer Telnyx a veces corta el WS antes de llm-response.
+        # Si Veloxiam ya transfirió (ring), el stream muere y no hay despedida audible.
         if _session_is_dead(self._session):
             logger.info(
                 f"[agent] Respuesta descartada — transporte cerrado "
                 f"session={self._session.id} action={action} reply={reply!r}"
             )
             logger.warning(
-                "[agent] Veloxiam transfirió ANTES de que Pipecat pudiera despedirse. "
-                "Orden correcto: 1) responder llm-response con texto+action=transfer "
-                "2) esperar ~3s (TTS) 3) transferir y NO abrir otro /telnyx al bot"
+                "[agent] Veloxiam NO debe transferir en llm-response. "
+                "Debe devolver action=transfer, Pipecat dice 'te transfiero', "
+                "y SOLO entonces Veloxiam ejecuta el transfer en TRANSFER_EXECUTE_URL "
+                "(ahí empieza el ring)."
             )
             return
 
         reply = _ensure_farewell(reply, action)
 
-        # Liberar tras despedida para que el bot no siga hablando en la llamada transferida.
-        if action:
+        if action == "transfer":
+            self._session.transfer_execute_pending = True
+            self._session.transfer_meta = meta or {}
             logger.info(
-                f"[agent] Liberación programada action={action} "
-                f"farewell={bool(reply)} session={self._session.id}"
+                f"[agent] Despedida en Pipecat; transfer Telnyx tras TTS "
+                f"session={self._session.id}"
             )
+            begin_release(self._session, action, wait_for_speech=bool(reply))
+        elif action:
             begin_release(self._session, action, wait_for_speech=bool(reply))
 
         if reply:
@@ -343,8 +358,8 @@ class NestJSAgentProcessor(FrameProcessor):
 
     async def _call_veloxiam(
         self, user_text: str
-    ) -> tuple[Optional[str], Optional[str], int]:
-        """POST a Veloxiam llm-response. Devuelve (texto, action, status HTTP)."""
+    ) -> tuple[Optional[str], Optional[str], dict, int]:
+        """POST a Veloxiam llm-response. Devuelve (texto, action, meta, status)."""
         payload = {
             "sessionId": self._session.id,
             "callId": self._session.call_id,
@@ -366,12 +381,12 @@ class NestJSAgentProcessor(FrameProcessor):
         req_ms = (time.perf_counter() - t0) * 1000
         resp.raise_for_status()
         data = resp.json()
-        reply, action = _parse_veloxiam_body(data)
+        reply, action, meta = _parse_veloxiam_body(data)
         logger.debug(
             f"[Veloxiam] HTTP {resp.status_code} body recibido en {req_ms:.0f}ms — "
             f"session={self._session.id} action={action}"
         )
-        return reply, action, resp.status_code
+        return reply, action, meta, resp.status_code
 
     async def _cancel_pending(self):
         if self._pending is not None:

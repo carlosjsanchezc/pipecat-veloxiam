@@ -42,6 +42,11 @@ class CallSession:
         self.disconnected = False
         # Usuario pidió transfer humano; la próxima reply de Veloxiam libera el bot.
         self.expect_transfer = False
+        # Tras despedida TTS, Pipecat avisa a Veloxiam para ejecutar el transfer (ring).
+        self.transfer_execute_pending = False
+        self.transfer_notified = False
+        self.transfer_meta: dict = {}
+        self.http_client = None
 
     def add_turn(self, role: str, text: str, confidence: Optional[float] = None):
         self.transcript.append(
