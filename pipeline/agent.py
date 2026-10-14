@@ -19,9 +19,7 @@ from pipecat.frames.frames import (
     Frame,
     InterruptionFrame,
     LLMContextFrame,
-    LLMFullResponseEndFrame,
-    LLMFullResponseStartFrame,
-    LLMTextFrame,
+    TTSSpeakFrame,
 )
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -380,9 +378,9 @@ class NestJSAgentProcessor(FrameProcessor):
         if reply:
             self._session.add_turn("assistant", reply, None)
             t1 = time.perf_counter()
-            await self.push_frame(LLMFullResponseStartFrame())
-            await self.push_frame(LLMTextFrame(reply))
-            await self.push_frame(LLMFullResponseEndFrame())
+            # Respuesta completa en una sola generación de Cartesia: partida por
+            # frases, las uniones entre fragmentos suenan con saltos.
+            await self.push_frame(TTSSpeakFrame(reply))
             tts_queue_ms = (time.perf_counter() - t1) * 1000
             logger.info(
                 f"[TTS] encolado en {tts_queue_ms:.0f}ms — session={self._session.id}"

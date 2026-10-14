@@ -36,7 +36,6 @@ def create_tts(cfg: BotConfig, sample_rate: int = 16000) -> CartesiaTTSService:
         sample_rate=sample_rate,
         encoding="pcm_s16le",
         container="raw",
-        max_buffer_delay_ms=100,
         cartesia_version="2026-03-01",
         params=CartesiaTTSService.InputParams(language=to_language(cfg.language)),
     )
