@@ -39,6 +39,7 @@ from pipeline.greeting import GreetingBargeInGate, GreetingCompleteTap, begin_gr
 from pipeline.release import CallReleaseTap
 from pipeline.stt import AudioInputTap, PipelineErrorTap, TranscriptionTap, create_stt
 from pipeline.tts import create_tts
+from pipeline.tts_buffer import TTSJitterBuffer, TTSUnderrunMonitor
 from pipeline.vad import create_telnyx_vad_analyzer, create_user_aggregator_params
 
 TELNYX_SAMPLE_RATE = 8000
@@ -124,6 +125,8 @@ async def run_telnyx_call(
             GreetingBargeInGate(session),
             agent,
             tts,
+            TTSJitterBuffer(),
+            TTSUnderrunMonitor(session.id),
             transport.output(),
             GreetingCompleteTap(session),
             CallReleaseTap(session),

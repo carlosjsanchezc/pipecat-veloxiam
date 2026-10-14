@@ -35,6 +35,7 @@ from pipeline.stt import (
     create_stt,
 )
 from pipeline.tts import create_tts
+from pipeline.tts_buffer import TTSJitterBuffer, TTSUnderrunMonitor
 from pipeline.vad import create_user_aggregator_params, create_whatsapp_vad_analyzer
 
 # WebRTC WhatsApp: 16 kHz en todo el pipeline (como la config original que funcionaba).
@@ -96,6 +97,8 @@ async def run_whatsapp_call(
             GreetingBargeInGate(session),
             agent,
             tts,
+            TTSJitterBuffer(),
+            TTSUnderrunMonitor(session.id),
             AudioOutputTap(session.id),
             transport.output(),
             GreetingCompleteTap(session),
