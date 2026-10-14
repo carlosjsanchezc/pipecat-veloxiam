@@ -6,14 +6,40 @@ Pipecat solo los usa: voz/idioma/modelo para el TTS-STT, y bot_id para el header
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
+
+from loguru import logger
+from pipecat.transcriptions.language import Language
+
+
+def default_language() -> str:
+    return (os.getenv("DEFAULT_LANGUAGE") or "es").strip()
+
+
+def resolve_language(value: Optional[str]) -> str:
+    """Idioma pedido al iniciar la llamada, o DEFAULT_LANGUAGE si falta o no es válido."""
+    code = (value or "").strip()
+    if not code:
+        return default_language()
+    try:
+        Language(code)
+        return code
+    except ValueError:
+        try:
+            Language(code.split("-")[0])
+            return code.split("-")[0]
+        except ValueError:
+            fallback = default_language()
+            logger.warning(f"[config] language={code!r} no soportado — usando {fallback!r}")
+            return fallback
 
 
 @dataclass
 class BotConfig:
     bot_id: str
     voice_id: str
-    language: str = "es"
+    language: str = field(default_factory=default_language)
     cartesia_model: str = "sonic-3.5"
     # nova-2-phonecall solo soporta en/en-US; para español usar nova-2-general.
     deepgram_model: str = "nova-3"
@@ -31,7 +57,7 @@ class BotConfig:
         return cls(
             bot_id=data["botId"],
             voice_id=data["voiceId"],
-            language=data.get("language", "es"),
+            language=resolve_language(data.get("language")),
             cartesia_model=data.get("cartesiaModel", os.getenv("CARTESIA_MODEL", "sonic-3.5")),
             deepgram_model=data.get(
                 "deepgramModel",

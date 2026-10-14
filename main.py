@@ -28,7 +28,7 @@ from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.transports.smallwebrtc.connection import IceServer, SmallWebRTCConnection
 
 from pipeline.whatsapp import run_whatsapp_call
-from pipeline.config import BotConfig
+from pipeline.config import BotConfig, resolve_language
 from pipeline.telnyx import run_telnyx_call
 from session_manager import SessionManager
 
@@ -201,7 +201,8 @@ async def telnyx_stream(websocket: WebSocket):
 
     Veloxiam (NestJS) ya contestó la llamada y resolvió el bot por el número
     llamado; arrancó el streaming hacia aquí con el contexto en la query:
-    ``?botId=...&voiceId=...&telnyxApiKey=...&from=...&to=...&callId=<call_control_id>``.
+    ``?botId=...&voiceId=...&telnyxApiKey=...&from=...&to=...&callId=<call_control_id>``
+    (opcional ``&language=en``; si falta, DEFAULT_LANGUAGE).
 
     Reutiliza el mismo pipeline que WhatsApp, con transporte WebSocket + Telnyx
     serializer (PCMU 8000).
@@ -252,6 +253,7 @@ async def telnyx_stream(websocket: WebSocket):
     cfg = BotConfig(
         bot_id=bot_id,
         voice_id=voice_id,
+        language=resolve_language(q.get("language")),
         greeting=q.get("greeting", "Hola, gracias por llamar. ¿En qué puedo ayudarte?"),
         is_ia_content=is_ia_content,
         chat_id=chat_id,
