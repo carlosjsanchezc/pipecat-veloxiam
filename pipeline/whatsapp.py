@@ -77,7 +77,12 @@ async def run_whatsapp_call(
         user_params=create_user_aggregator_params(vad),
     )
 
-    agent = NestJSAgentProcessor(session=session, http=http, llm_url=llm_url)
+    agent = NestJSAgentProcessor(
+        session=session,
+        http=http,
+        llm_url=llm_url,
+        audio_sample_rate=WHATSAPP_SAMPLE_RATE,
+    )
 
     pipeline = Pipeline(
         [

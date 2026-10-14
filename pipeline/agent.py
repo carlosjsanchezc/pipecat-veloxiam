@@ -26,6 +26,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
+from pipeline.audio_clip import AudioClipEndFrame, load_audio_clip
 from pipeline.release import begin_release
 
 _PLACEHOLDER_RE = re.compile(r"//[^/]+//")
@@ -133,28 +134,43 @@ def _normalize_release_action(action: Optional[str]) -> Optional[str]:
     return None
 
 
-def _parse_veloxiam_body(data: Any) -> tuple[Optional[str], Optional[str], dict]:
-    """Extrae (texto TTS, action, meta extra) del JSON de llm-response.
+def _audio_url(data: dict) -> Optional[str]:
+    raw = data.get("audiofile")
+    if raw is None and isinstance(data.get("data"), dict):
+        raw = data["data"].get("audiofile")
+    if isinstance(raw, str) and raw.strip().lower().startswith(("http://", "https://")):
+        return raw.strip()
+    return None
+
+
+def _parse_veloxiam_body(
+    data: Any,
+) -> tuple[Optional[str], Optional[str], dict, Optional[str]]:
+    """Extrae (texto TTS, action, meta extra, URL de audio) del JSON de llm-response.
 
     Contrato Veloxiam::
 
         {"text": "…", "action": "transfer"}   # NO transferir aún en Telnyx
         # Tras la despedida TTS, Pipecat POSTea TRANSFER_EXECUTE_URL y ahí sí ring.
+
+        {"text": "Te dejo el audio.", "audiofile": "https://…"}
+        # URL firmada (2 h) del audio del bot; suena después del texto.
     """
     meta: dict = {}
     if isinstance(data, str):
         reply = _clean_tts_text(data)
         action = "transfer" if reply and _REPLY_TRANSFER_RE.search(reply) else None
-        return reply, action, meta
+        return reply, action, meta, None
 
     if not isinstance(data, dict):
-        return None, None, meta
+        return None, None, meta, None
 
     raw = data.get("text") or data.get("reply") or data.get("message")
     if raw is None and isinstance(data.get("data"), dict):
         nested = data["data"]
         raw = nested.get("text") or nested.get("reply") or nested.get("message")
     reply = _clean_tts_text(raw) if isinstance(raw, str) else None
+    audio_url = _audio_url(data)
 
     action = _normalize_release_action(
         data.get("action") if isinstance(data.get("action"), str) else None
@@ -183,7 +199,7 @@ def _parse_veloxiam_body(data: Any) -> tuple[Optional[str], Optional[str], dict]
         if key in data and data[key] is not None:
             meta[key] = data[key]
 
-    return reply, action, meta
+    return reply, action, meta, audio_url
 
 
 def _ensure_farewell(reply: Optional[str], action: Optional[str]) -> Optional[str]:
@@ -204,11 +220,20 @@ class NestJSAgentProcessor(FrameProcessor):
     """Hace de "LLM": al cerrarse el turno del usuario consulta a Veloxiam y
     emite la respuesta como texto hacia el TTS."""
 
-    def __init__(self, *, session, http: httpx.AsyncClient, llm_url: str, **kwargs):
+    def __init__(
+        self,
+        *,
+        session,
+        http: httpx.AsyncClient,
+        llm_url: str,
+        audio_sample_rate: int,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self._session = session
         self._http = http
         self._llm_url = llm_url
+        self._audio_sample_rate = audio_sample_rate
         self._pending = None
         # Para que release.py pueda avisar transfer-execute tras la despedida.
         session.http_client = http
@@ -224,6 +249,7 @@ class NestJSAgentProcessor(FrameProcessor):
                 return
             logger.info("[agent] ⚡ Barge-in — cancelando petición en vuelo")
             await self._cancel_pending()
+            self._session.audio_clip_pending = False
             await self.push_frame(frame, direction)
             return
 
@@ -263,8 +289,11 @@ class NestJSAgentProcessor(FrameProcessor):
     async def _respond(self, user_text: str):
         t0 = time.perf_counter()
         action: Optional[str] = None
+        audio_url: Optional[str] = None
         try:
-            reply, action, meta, http_status = await self._call_veloxiam(user_text)
+            reply, action, meta, audio_url, http_status = await self._call_veloxiam(
+                user_text
+            )
             # Si el usuario pidió transfer y Veloxiam no mandó action, igual liberamos.
             if (
                 action is None
@@ -278,6 +307,8 @@ class NestJSAgentProcessor(FrameProcessor):
                 )
             llm_ms = (time.perf_counter() - t0) * 1000
             action_log = f" action={action}" if action else ""
+            if audio_url:
+                action_log += " +audiofile"
             if reply:
                 logger.info(
                     f"[Veloxiam] respondió HTTP {http_status} en {llm_ms:.0f}ms — "
@@ -329,6 +360,12 @@ class NestJSAgentProcessor(FrameProcessor):
 
         reply = _ensure_farewell(reply, action)
 
+        # Mientras el clip esté pendiente, CallReleaseTap no libera con el
+        # BotStoppedSpeaking del texto: espera a AudioClipEndFrame.
+        if audio_url:
+            self._session.audio_clip_pending = True
+        has_speech = bool(reply or audio_url)
+
         if action == "transfer":
             self._session.transfer_execute_pending = True
             self._session.transfer_meta = meta or {}
@@ -336,9 +373,9 @@ class NestJSAgentProcessor(FrameProcessor):
                 f"[agent] Despedida en Pipecat; transfer Telnyx tras TTS "
                 f"session={self._session.id}"
             )
-            begin_release(self._session, action, wait_for_speech=bool(reply))
+            begin_release(self._session, action, wait_for_speech=has_speech)
         elif action:
-            begin_release(self._session, action, wait_for_speech=bool(reply))
+            begin_release(self._session, action, wait_for_speech=has_speech)
 
         if reply:
             self._session.add_turn("assistant", reply, None)
@@ -350,16 +387,48 @@ class NestJSAgentProcessor(FrameProcessor):
             logger.info(
                 f"[TTS] encolado en {tts_queue_ms:.0f}ms — session={self._session.id}"
             )
-        elif action:
+        elif action and not audio_url:
             logger.info(
                 f"[agent] Sin texto de despedida — liberando ya "
                 f"action={action} session={self._session.id}"
             )
 
+        if audio_url:
+            await self._play_audio_clip(audio_url)
+
+    async def _play_audio_clip(self, url: str):
+        """Descarga el audio (mientras suena el texto) y lo encola tras el TTS."""
+        try:
+            clip = await load_audio_clip(self._http, url, self._audio_sample_rate)
+        except asyncio.CancelledError:
+            self._session.audio_clip_pending = False
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                f"[audio-clip] No se pudo cargar el audio — session={self._session.id}: {e}"
+            )
+            clip = None
+
+        if _session_is_dead(self._session):
+            self._session.audio_clip_pending = False
+            return
+
+        if clip and clip.frames:
+            self._session.add_turn("assistant", "[audio]", None)
+            for frame in clip.frames:
+                await self.push_frame(frame)
+            logger.info(
+                f"[audio-clip] Encolado {clip.duration_secs:.1f}s — "
+                f"session={self._session.id}"
+            )
+        # Siempre se empuja el fin de clip: si falló la carga, libera igualmente
+        # una despedida pendiente detrás del texto.
+        await self.push_frame(AudioClipEndFrame())
+
     async def _call_veloxiam(
         self, user_text: str
-    ) -> tuple[Optional[str], Optional[str], dict, int]:
-        """POST a Veloxiam llm-response. Devuelve (texto, action, meta, status)."""
+    ) -> tuple[Optional[str], Optional[str], dict, Optional[str], int]:
+        """POST a Veloxiam llm-response. Devuelve (texto, action, meta, audio, status)."""
         payload = {
             "sessionId": self._session.id,
             "callId": self._session.call_id,
@@ -381,12 +450,12 @@ class NestJSAgentProcessor(FrameProcessor):
         req_ms = (time.perf_counter() - t0) * 1000
         resp.raise_for_status()
         data = resp.json()
-        reply, action, meta = _parse_veloxiam_body(data)
+        reply, action, meta, audio_url = _parse_veloxiam_body(data)
         logger.debug(
             f"[Veloxiam] HTTP {resp.status_code} body recibido en {req_ms:.0f}ms — "
             f"session={self._session.id} action={action}"
         )
-        return reply, action, meta, resp.status_code
+        return reply, action, meta, audio_url, resp.status_code
 
     async def _cancel_pending(self):
         if self._pending is not None:

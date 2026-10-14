@@ -17,6 +17,8 @@ from loguru import logger
 from pipecat.frames.frames import BotStoppedSpeakingFrame, Frame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
+from pipeline.audio_clip import AudioClipEndFrame
+
 
 def begin_release(session, reason: str, *, wait_for_speech: bool) -> None:
     """Marca la sesión para liberar el pipeline (ya o tras el TTS)."""
@@ -37,6 +39,11 @@ def begin_release(session, reason: str, *, wait_for_speech: bool) -> None:
 
 async def _release_watchdog(session, max_sec: float) -> None:
     await asyncio.sleep(max_sec)
+    clip_max = float(os.getenv("AUDIO_CLIP_MAX_SEC", "300"))
+    waited = 0.0
+    while getattr(session, "audio_clip_pending", False) and waited < clip_max:
+        await asyncio.sleep(1.0)
+        waited += 1.0
     if getattr(session, "release_pending", False):
         logger.warning(
             f"[release] Watchdog ({max_sec:.0f}s) — liberando sin BotStoppedSpeaking "
@@ -146,14 +153,20 @@ class CallReleaseTap(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, BotStoppedSpeakingFrame) and getattr(
-            self._session, "release_pending", False
+        if isinstance(frame, AudioClipEndFrame):
+            self._session.audio_clip_pending = False
+            if getattr(self._session, "release_pending", False):
+                self._release("audio de despedida terminado")
+        elif (
+            isinstance(frame, BotStoppedSpeakingFrame)
+            and getattr(self._session, "release_pending", False)
+            and not getattr(self._session, "audio_clip_pending", False)
         ):
-            reason = getattr(self._session, "release_reason", "release")
-            logger.info(
-                f"[release] TTS despedida terminado — reason={reason} "
-                f"session={self._session.id}"
-            )
-            asyncio.create_task(_finish_release(self._session, reason))
+            self._release("TTS despedida terminado")
 
         await self.push_frame(frame, direction)
+
+    def _release(self, why: str) -> None:
+        reason = getattr(self._session, "release_reason", "release")
+        logger.info(f"[release] {why} — reason={reason} session={self._session.id}")
+        asyncio.create_task(_finish_release(self._session, reason))

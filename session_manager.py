@@ -47,6 +47,8 @@ class CallSession:
         self.transfer_notified = False
         self.transfer_meta: dict = {}
         self.http_client = None
+        # Clip de audio (audiofile de Veloxiam) encolado y aún sin terminar.
+        self.audio_clip_pending = False
 
     def add_turn(self, role: str, text: str, confidence: Optional[float] = None):
         self.transcript.append(
