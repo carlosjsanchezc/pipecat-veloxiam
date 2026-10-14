@@ -8,6 +8,7 @@ Pipecat deje de hablar aunque el media stream siga abierto.
 """
 
 import asyncio
+import os
 import re
 import time
 from typing import Any, Optional
@@ -20,6 +21,8 @@ from pipecat.frames.frames import (
     InterruptionFrame,
     LLMContextFrame,
     TTSSpeakFrame,
+    UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
 )
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -233,16 +236,38 @@ class NestJSAgentProcessor(FrameProcessor):
         self._llm_url = llm_url
         self._audio_sample_rate = audio_sample_rate
         self._pending = None
+        # True desde que se pide la respuesta a Veloxiam hasta que se encola al
+        # TTS: una interrupción en ese tramo no corta nada audible.
+        self._reply_not_started = False
+        self._interrupted_during_wait = False
+        self._user_speaking = False
+        self._user_stopped_at = 0.0
         # Para que release.py pueda avisar transfer-execute tras la despedida.
         session.http_client = http
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
+        if isinstance(frame, UserStartedSpeakingFrame):
+            self._user_speaking = True
+        elif isinstance(frame, UserStoppedSpeakingFrame):
+            self._user_speaking = False
+            self._user_stopped_at = time.monotonic()
+
         if isinstance(frame, InterruptionFrame):
             if getattr(self._session, "release_pending", False) or getattr(
                 self._session, "released", False
             ):
+                await self.push_frame(frame, direction)
+                return
+            if self._pending is not None and self._reply_not_started:
+                # El bot aún no habla: si el usuario dice algo nuevo, _on_user_turn
+                # reemplaza la petición; si era ruido, la respuesta se retiene y suena.
+                self._interrupted_during_wait = True
+                logger.info(
+                    "[agent] Voz del usuario mientras se espera a Veloxiam — "
+                    "se mantiene la petición"
+                )
                 await self.push_frame(frame, direction)
                 return
             logger.info("[agent] ⚡ Barge-in — cancelando petición en vuelo")
@@ -282,9 +307,32 @@ class NestJSAgentProcessor(FrameProcessor):
             )
 
         await self._cancel_pending()
+        self._reply_not_started = True
+        self._interrupted_during_wait = False
         self._pending = self.create_task(self._respond(user_text))
 
+    async def _wait_user_quiet(self):
+        """Retiene la respuesta hasta que el usuario calle y pase un margen sin
+        turno nuevo (si llega uno, _on_user_turn cancela esta tarea)."""
+        grace = float(os.getenv("REPLY_HOLD_GRACE_SEC", "1.0"))
+        max_wait = float(os.getenv("REPLY_HOLD_MAX_SEC", "15"))
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < max_wait:
+            if not self._user_speaking and time.monotonic() - self._user_stopped_at >= grace:
+                break
+            await asyncio.sleep(0.05)
+        logger.info(
+            f"[agent] Respuesta retenida {(time.monotonic() - t0) * 1000:.0f}ms "
+            f"(sin turno nuevo) — se reproduce session={self._session.id}"
+        )
+
     async def _respond(self, user_text: str):
+        try:
+            await self._respond_inner(user_text)
+        finally:
+            self._reply_not_started = False
+
+    async def _respond_inner(self, user_text: str):
         t0 = time.perf_counter()
         action: Optional[str] = None
         audio_url: Optional[str] = None
@@ -355,6 +403,12 @@ class NestJSAgentProcessor(FrameProcessor):
                 "(ahí empieza el ring)."
             )
             return
+
+        if self._interrupted_during_wait:
+            await self._wait_user_quiet()
+            if _session_is_dead(self._session):
+                return
+        self._reply_not_started = False
 
         reply = _ensure_farewell(reply, action)
 
