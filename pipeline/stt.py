@@ -73,8 +73,19 @@ def create_stt(cfg: BotConfig, sample_rate: int = 16000) -> DeepgramSTTService:
 
     ``sample_rate`` por defecto 16000 (WhatsApp/WebRTC). Telefonía Telnyx usa 8000.
     """
-    language = to_language(cfg.language)
-    model = _resolve_deepgram_model(cfg.deepgram_model, language)
+    # DEEPGRAM_LANGUAGE solo afecta al STT; Cartesia sigue con cfg.language.
+    stt_language = (os.getenv("DEEPGRAM_LANGUAGE") or "").strip().lower()
+    if stt_language == "multi":
+        language = "multi"
+        model = cfg.deepgram_model
+        if not model.startswith("nova-3"):
+            logger.warning(
+                f"[Deepgram] language=multi requiere nova-3 (model={model}); usando nova-3"
+            )
+            model = "nova-3"
+    else:
+        language = to_language(stt_language or cfg.language)
+        model = _resolve_deepgram_model(cfg.deepgram_model, language)
     logger.info(
         f"[Deepgram] STT init — bot_id={cfg.bot_id} model={model} "
         f"lang={language} sample_rate={sample_rate}"

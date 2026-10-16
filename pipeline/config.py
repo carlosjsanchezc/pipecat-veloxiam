@@ -17,6 +17,10 @@ def default_language() -> str:
     return (os.getenv("DEFAULT_LANGUAGE") or "es").strip()
 
 
+def default_deepgram_model() -> str:
+    return (os.getenv("DEEPGRAM_MODEL") or "nova-3").strip()
+
+
 def resolve_language(value: Optional[str]) -> str:
     """Idioma pedido al iniciar la llamada, o DEFAULT_LANGUAGE si falta o no es válido."""
     code = (value or "").strip()
@@ -42,7 +46,7 @@ class BotConfig:
     language: str = field(default_factory=default_language)
     cartesia_model: str = "sonic-3.5"
     # nova-2-phonecall solo soporta en/en-US; para español usar nova-2-general.
-    deepgram_model: str = "nova-3"
+    deepgram_model: str = field(default_factory=default_deepgram_model)
     tenant_id: str = "default"
     greeting: str = ""
     # Outbound: si True, `greeting` es una instrucción para que la IA genere el
@@ -59,10 +63,7 @@ class BotConfig:
             voice_id=data["voiceId"],
             language=resolve_language(data.get("language")),
             cartesia_model=data.get("cartesiaModel", os.getenv("CARTESIA_MODEL", "sonic-3.5")),
-            deepgram_model=data.get(
-                "deepgramModel",
-                os.getenv("DEEPGRAM_MODEL", "nova-2-general"),
-            ),
+            deepgram_model=data.get("deepgramModel") or default_deepgram_model(),
             tenant_id=data.get("tenantId", "default"),
             greeting=data.get("greeting", "Hola, ¿cómo estás?"),
         )
