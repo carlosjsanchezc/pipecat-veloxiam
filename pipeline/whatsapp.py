@@ -83,6 +83,7 @@ async def run_whatsapp_call(
         http=http,
         llm_url=llm_url,
         audio_sample_rate=WHATSAPP_SAMPLE_RATE,
+        language=cfg.language,
     )
 
     pipeline = Pipeline(

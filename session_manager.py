@@ -7,6 +7,7 @@ NestJS.
 
 import time
 import uuid
+from collections import Counter
 from typing import Dict, Optional
 
 import httpx
@@ -27,6 +28,8 @@ class CallSession:
         # Confidence de la última transcripción final del usuario (lo fija
         # TranscriptionTap y lo lee NestJSAgentProcessor al cerrar el turno).
         self.last_user_confidence: Optional[float] = None
+        # Palabras por idioma detectadas por Deepgram (multi) en el turno en curso.
+        self.turn_language_words: Counter = Counter()
         # PipelineWorker en ejecución (whatsapp.run_whatsapp_call o telnyx.run_telnyx_call).
         self.worker = None
         # True cuando el usuario habla o hay STT; evita saludo TTS encima (WhatsApp).

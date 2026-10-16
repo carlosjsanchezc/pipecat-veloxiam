@@ -33,7 +33,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.deepgram.stt import DeepgramSTTService
 
 from pipeline.config import BotConfig
-from pipeline.lang import to_language
+from pipeline.lang import to_language, transcription_languages
 
 
 # Modelos Deepgram solo-inglés. Con language=es Deepgram responde HTTP 400.
@@ -261,7 +261,10 @@ class TranscriptionTap(FrameProcessor):
         if isinstance(frame, TranscriptionFrame):
             self._session.user_spoke = True
             conf = transcription_confidence(frame)
-            logger.info(f"[STT final] ({conf}) {frame.text!r}")
+            langs = transcription_languages(frame)
+            self._session.turn_language_words.update(langs)
+            lang_log = f" lang={dict(langs)}" if langs else ""
+            logger.info(f"[STT final] ({conf}){lang_log} {frame.text!r}")
             # Guardamos el confidence de la última final para asociarlo al turno
             # de usuario cuando el agregador cierre el turno (ver pipeline/agent.py).
             self._session.last_user_confidence = conf

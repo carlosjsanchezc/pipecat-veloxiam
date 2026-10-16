@@ -21,13 +21,17 @@ from pipecat.frames.frames import (
     InterruptionFrame,
     LLMContextFrame,
     TTSSpeakFrame,
+    TTSUpdateSettingsFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
 )
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.services.settings import TTSSettings
+from pipecat.transcriptions.language import Language
 
 from pipeline.audio_clip import AudioClipEndFrame, load_audio_clip
+from pipeline.lang import base_code, pick_turn_language
 from pipeline.release import begin_release
 
 _PLACEHOLDER_RE = re.compile(r"//[^/]+//")
@@ -71,9 +75,38 @@ _USER_TRANSFER_RE = re.compile(
 )
 
 _DEFAULT_FAREWELL = {
-    "transfer": "Claro, te transfiero en este momento.",
-    "end_call": "Gracias por llamar. Hasta luego.",
+    "es": {
+        "transfer": "Claro, te transfiero en este momento.",
+        "end_call": "Gracias por llamar. Hasta luego.",
+    },
+    "en": {
+        "transfer": "Sure, I'm transferring you now.",
+        "end_call": "Thanks for calling. Goodbye.",
+    },
 }
+
+_ERROR_REPLY = {
+    "es": "Lo siento, tuve un problema. ¿Puedes repetirlo?",
+    "en": "Sorry, I had a problem. Could you repeat that?",
+}
+
+
+def _veloxiam_language(data: Any) -> Optional[str]:
+    """``language`` opcional de llm-response: fuerza el idioma de la respuesta."""
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("language")
+    if raw is None and isinstance(data.get("data"), dict):
+        raw = data["data"].get("language")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    code = base_code(raw)
+    try:
+        Language(code)
+    except ValueError:
+        logger.warning(f"[agent] language={raw!r} de Veloxiam no soportado — se ignora")
+        return None
+    return code
 
 
 def _content_to_text(content: Any) -> str:
@@ -203,17 +236,20 @@ def _parse_veloxiam_body(
     return reply, action, meta, audio_url
 
 
-def _ensure_farewell(reply: Optional[str], action: Optional[str]) -> Optional[str]:
+def _ensure_farewell(
+    reply: Optional[str], action: Optional[str], language: str = "es"
+) -> Optional[str]:
     """Despedida hablada por Pipecat. En transfer siempre hay texto (default si falta)."""
+    farewells = _DEFAULT_FAREWELL.get(language, _DEFAULT_FAREWELL["es"])
     if action == "transfer":
         # La despedida la dice Pipecat aquí; el ring lo dispara Veloxiam después del TTS.
         if reply and _REPLY_TRANSFER_RE.search(reply):
             return reply
-        return _DEFAULT_FAREWELL["transfer"]
+        return farewells["transfer"]
     if reply:
         return reply
-    if action and action in _DEFAULT_FAREWELL:
-        return _DEFAULT_FAREWELL[action]
+    if action and action in farewells:
+        return farewells[action]
     return None
 
 
@@ -228,6 +264,7 @@ class NestJSAgentProcessor(FrameProcessor):
         http: httpx.AsyncClient,
         llm_url: str,
         audio_sample_rate: int,
+        language: str,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -235,6 +272,10 @@ class NestJSAgentProcessor(FrameProcessor):
         self._http = http
         self._llm_url = llm_url
         self._audio_sample_rate = audio_sample_rate
+        # Idioma de la conversación (cambia con lo que detecta Deepgram multi) y
+        # el que tiene ahora Cartesia (arranca con el de la llamada).
+        self._language = base_code(language)
+        self._tts_language = self._language
         self._pending = None
         # True desde que se pide la respuesta a Veloxiam hasta que se encola al
         # TTS: una interrupción en ese tramo no corta nada audible.
@@ -298,7 +339,18 @@ class NestJSAgentProcessor(FrameProcessor):
         confidence = getattr(self._session, "last_user_confidence", None)
         self._session.add_turn("user", user_text, confidence)
         conf_pct = f"{confidence * 100:.0f}%" if confidence is not None else "?"
-        logger.info(f"[STT→usuario] {user_text!r}  conf={conf_pct}")
+        words_by_lang = self._session.turn_language_words
+        self._session.turn_language_words = type(words_by_lang)()
+        turn_language = pick_turn_language(words_by_lang, self._language)
+        if turn_language and turn_language != self._language:
+            logger.info(
+                f"[idioma] {self._language} → {turn_language} "
+                f"(palabras={dict(words_by_lang)}) session={self._session.id}"
+            )
+            self._language = turn_language
+        logger.info(
+            f"[STT→usuario] {user_text!r}  conf={conf_pct} lang={self._language}"
+        )
 
         if _USER_TRANSFER_RE.search(user_text):
             self._session.expect_transfer = True
@@ -309,7 +361,7 @@ class NestJSAgentProcessor(FrameProcessor):
         await self._cancel_pending()
         self._reply_not_started = True
         self._interrupted_during_wait = False
-        self._pending = self.create_task(self._respond(user_text))
+        self._pending = self.create_task(self._respond(user_text, self._language))
 
     async def _wait_user_quiet(self):
         """Retiene la respuesta hasta que el usuario calle y pase un margen sin
@@ -326,20 +378,27 @@ class NestJSAgentProcessor(FrameProcessor):
             f"(sin turno nuevo) — se reproduce session={self._session.id}"
         )
 
-    async def _respond(self, user_text: str):
+    async def _respond(self, user_text: str, language: str):
         try:
-            await self._respond_inner(user_text)
+            await self._respond_inner(user_text, language)
         finally:
             self._reply_not_started = False
 
-    async def _respond_inner(self, user_text: str):
+    async def _respond_inner(self, user_text: str, language: str):
         t0 = time.perf_counter()
         action: Optional[str] = None
         audio_url: Optional[str] = None
         try:
-            reply, action, meta, audio_url, http_status = await self._call_veloxiam(
-                user_text
-            )
+            (
+                reply,
+                action,
+                meta,
+                audio_url,
+                http_status,
+                reply_language,
+            ) = await self._call_veloxiam(user_text, language)
+            if reply_language:
+                language = reply_language
             # Si el usuario pidió transfer y Veloxiam no mandó action, igual liberamos.
             if (
                 action is None
@@ -378,7 +437,7 @@ class NestJSAgentProcessor(FrameProcessor):
                 f"[Veloxiam] timeout tras {llm_ms:.0f}ms — session={self._session.id} "
                 f"url={self._llm_url}"
             )
-            reply = "Lo siento, tuve un problema. ¿Puedes repetirlo?"
+            reply = _ERROR_REPLY.get(language, _ERROR_REPLY["es"])
             action = None
             meta = {}
         except Exception as e:  # noqa: BLE001
@@ -386,7 +445,7 @@ class NestJSAgentProcessor(FrameProcessor):
             logger.exception(
                 f"[Veloxiam] error tras {llm_ms:.0f}ms — session={self._session.id}: {e}"
             )
-            reply = "Lo siento, tuve un problema. ¿Puedes repetirlo?"
+            reply = _ERROR_REPLY.get(language, _ERROR_REPLY["es"])
             action = None
             meta = {}
 
@@ -410,7 +469,7 @@ class NestJSAgentProcessor(FrameProcessor):
                 return
         self._reply_not_started = False
 
-        reply = _ensure_farewell(reply, action)
+        reply = _ensure_farewell(reply, action, language)
 
         # Mientras el clip esté pendiente, CallReleaseTap no libera con el
         # BotStoppedSpeaking del texto: espera a AudioClipEndFrame.
@@ -432,6 +491,7 @@ class NestJSAgentProcessor(FrameProcessor):
         if reply:
             self._session.add_turn("assistant", reply, None)
             t1 = time.perf_counter()
+            await self._set_tts_language(language)
             # Respuesta completa en una sola generación de Cartesia: partida por
             # frases, las uniones entre fragmentos suenan con saltos.
             await self.push_frame(TTSSpeakFrame(reply))
@@ -447,6 +507,18 @@ class NestJSAgentProcessor(FrameProcessor):
 
         if audio_url:
             await self._play_audio_clip(audio_url)
+
+    async def _set_tts_language(self, language: str):
+        """Cambia el idioma de Cartesia; se aplica en orden, antes del TTSSpeakFrame."""
+        if language == self._tts_language:
+            return
+        logger.info(
+            f"[TTS] idioma {self._tts_language} → {language} session={self._session.id}"
+        )
+        self._tts_language = language
+        await self.push_frame(
+            TTSUpdateSettingsFrame(delta=TTSSettings(language=Language(language)))
+        )
 
     async def _play_audio_clip(self, url: str):
         """Descarga el audio (mientras suena el texto) y lo encola tras el TTS."""
@@ -478,19 +550,23 @@ class NestJSAgentProcessor(FrameProcessor):
         await self.push_frame(AudioClipEndFrame())
 
     async def _call_veloxiam(
-        self, user_text: str
-    ) -> tuple[Optional[str], Optional[str], dict, Optional[str], int]:
-        """POST a Veloxiam llm-response. Devuelve (texto, action, meta, audio, status)."""
+        self, user_text: str, language: str
+    ) -> tuple[Optional[str], Optional[str], dict, Optional[str], int, Optional[str]]:
+        """POST a Veloxiam llm-response.
+
+        Devuelve (texto, action, meta, audio, status, idioma forzado por Veloxiam).
+        """
         payload = {
             "sessionId": self._session.id,
             "callId": self._session.call_id,
             "tenantId": self._session.tenant_id,
             "from": self._session.phone_number,
             "text": user_text,
+            "language": language,
         }
         logger.info(
             f"[Veloxiam] → POST session={self._session.id} call_id={self._session.call_id} "
-            f"bot={self._session.bot_id} text={user_text!r}"
+            f"bot={self._session.bot_id} lang={language} text={user_text!r}"
         )
         t0 = time.perf_counter()
         resp = await self._http.post(
@@ -507,7 +583,7 @@ class NestJSAgentProcessor(FrameProcessor):
             f"[Veloxiam] HTTP {resp.status_code} body recibido en {req_ms:.0f}ms — "
             f"session={self._session.id} action={action}"
         )
-        return reply, action, meta, audio_url, resp.status_code
+        return reply, action, meta, audio_url, resp.status_code, _veloxiam_language(data)
 
     async def _cancel_pending(self):
         if self._pending is not None:

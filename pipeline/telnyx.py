@@ -112,6 +112,7 @@ async def run_telnyx_call(
         http=http,
         llm_url=llm_url,
         audio_sample_rate=TELNYX_SAMPLE_RATE,
+        language=cfg.language,
     )
 
     pipeline = Pipeline(
