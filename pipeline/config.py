@@ -14,7 +14,7 @@ from pipecat.transcriptions.language import Language
 
 
 def default_language() -> str:
-    return (os.getenv("DEFAULT_LANGUAGE") or "es").strip()
+    return (os.getenv("DEFAULT_LANGUAGE") or "en").strip()
 
 
 def default_deepgram_model() -> str:
