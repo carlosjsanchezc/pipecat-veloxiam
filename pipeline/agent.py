@@ -36,7 +36,10 @@ from pipeline.release import begin_release
 
 _PLACEHOLDER_RE = re.compile(r"//[^/]+//")
 # Tags tipo Cartesia/Veloxiam que no deben sintetizarse.
-_EMOTION_TAG_RE = re.compile(r"<emotion\b[^>]*/?>", re.IGNORECASE)
+# Veloxiam a veces la manda sin < >: emotion value="neutral"/
+_EMOTION_TAG_RE = re.compile(
+    r"<emotion\b[^>]*/?>|\bemotion\s+value\s*=\s*\"[^\"]*\"\s*/?>?", re.IGNORECASE
+)
 _XML_TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
 
 # Acciones de Veloxiam que deben cortar el pipeline de voz.
@@ -323,7 +326,7 @@ class NestJSAgentProcessor(FrameProcessor):
 
         await self.push_frame(frame, direction)
 
-    async def _on_user_turn(self, context: LLMContext):
+    def _accepts_turns(self) -> bool:
         if _session_is_dead(self._session) or getattr(
             self._session, "release_pending", False
         ):
@@ -331,6 +334,29 @@ class NestJSAgentProcessor(FrameProcessor):
                 f"[agent] Turno ignorado — pipeline en liberación/desconexión "
                 f"session={self._session.id}"
             )
+            return False
+        return True
+
+    async def handle_user_text(self, text: str, language: Optional[str] = None) -> bool:
+        """Turno de usuario recibido por API (no por voz): Veloxiam responde y suena.
+
+        Devuelve False si la llamada ya se está liberando o cerrando.
+        """
+        if not self._accepts_turns():
+            return False
+        self._session.add_turn("user", text, None)
+        if language and base_code(language) != self._language:
+            logger.info(
+                f"[idioma] {self._language} → {base_code(language)} (API) "
+                f"session={self._session.id}"
+            )
+            self._language = base_code(language)
+        logger.info(f"[API→usuario] {text!r} lang={self._language}")
+        await self._start_reply(text)
+        return True
+
+    async def _on_user_turn(self, context: LLMContext):
+        if not self._accepts_turns():
             return
 
         user_text = _latest_user_text(context)
@@ -351,7 +377,9 @@ class NestJSAgentProcessor(FrameProcessor):
         logger.info(
             f"[STT→usuario] {user_text!r}  conf={conf_pct} lang={self._language}"
         )
+        await self._start_reply(user_text)
 
+    async def _start_reply(self, user_text: str):
         if _USER_TRANSFER_RE.search(user_text):
             self._session.expect_transfer = True
             logger.info(

@@ -114,6 +114,7 @@ async def run_telnyx_call(
         audio_sample_rate=TELNYX_SAMPLE_RATE,
         language=cfg.language,
     )
+    session.agent = agent
 
     pipeline = Pipeline(
         [

@@ -32,6 +32,8 @@ class CallSession:
         self.turn_language_words: Counter = Counter()
         # PipelineWorker en ejecución (whatsapp.run_whatsapp_call o telnyx.run_telnyx_call).
         self.worker = None
+        # NestJSAgentProcessor de la llamada (POST /call/user-text).
+        self.agent = None
         # True cuando el usuario habla o hay STT; evita saludo TTS encima (WhatsApp).
         self.user_spoke = False
         # Saludo inicial: mientras True, no se propaga InterruptionFrame (VAD).

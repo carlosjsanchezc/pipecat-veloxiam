@@ -11,6 +11,7 @@ Endpoints:
   POST /call/start          { callId, botId, voiceId, sdpOffer, ... } -> { sdpAnswer }
   POST /call/terminate      cierra la llamada por callId (+ envía transcript)
   POST /call/agent-response inyecta texto del agente a una llamada (modo async)
+  POST /call/user-text      texto como si lo dijera el usuario: Veloxiam responde en la llamada
   GET  /health              estado + sesiones activas
 """
 
@@ -190,6 +191,27 @@ async def agent_response(data: dict):
     session.add_turn("assistant", text, None)
     await session.worker.queue_frame(TTSSpeakFrame(text))
     return {"status": "queued"}
+
+
+@app.post("/call/user-text")
+async def user_text(data: dict):
+    """Envía texto como turno del usuario en una llamada activa.
+
+    Body: { callId, text, language? }. Pipecat lo manda a Veloxiam (llm-response)
+    y la respuesta suena en la llamada, igual que si el usuario lo hubiera dicho.
+    """
+    call_id = data.get("callId")
+    text = (data.get("text") or "").strip()
+    if not call_id or not text:
+        raise HTTPException(status_code=400, detail="callId y text requeridos")
+    session = app.state.sessions.get(call_id)
+    agent = getattr(session, "agent", None) if session else None
+    if agent is None or session.worker is None:
+        raise HTTPException(status_code=404, detail="Sesión no activa")
+    language = resolve_language(data["language"]) if data.get("language") else None
+    if not await agent.handle_user_text(text, language):
+        raise HTTPException(status_code=409, detail="La llamada se está cerrando")
+    return {"status": "processing"}
 
 
 # --------------------------------------------------------------------------- #

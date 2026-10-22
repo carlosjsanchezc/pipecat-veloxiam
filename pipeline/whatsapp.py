@@ -85,6 +85,7 @@ async def run_whatsapp_call(
         audio_sample_rate=WHATSAPP_SAMPLE_RATE,
         language=cfg.language,
     )
+    session.agent = agent
 
     pipeline = Pipeline(
         [
