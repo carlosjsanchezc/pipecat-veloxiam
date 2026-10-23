@@ -94,6 +94,24 @@ _ERROR_REPLY = {
 }
 
 
+_LANGUAGE_NAMES = {
+    "es": "español",
+    "en": "inglés",
+    "pt": "portugués",
+    "fr": "francés",
+    "it": "italiano",
+    "de": "alemán",
+}
+
+
+def _with_language_hint(text: str, language: str) -> str:
+    """Veloxiam ignora el campo ``language``: la instrucción va en el propio texto."""
+    if os.getenv("REPLY_LANGUAGE_HINT", "true").strip().lower() in ("0", "false", "no"):
+        return text
+    name = _LANGUAGE_NAMES.get(language, language)
+    return f"{text} RESPONDE EN EL IDIOMA {name.upper()}"
+
+
 def _veloxiam_language(data: Any) -> Optional[str]:
     """``language`` opcional de llm-response: fuerza el idioma de la respuesta."""
     if not isinstance(data, dict):
@@ -589,12 +607,12 @@ class NestJSAgentProcessor(FrameProcessor):
             "callId": self._session.call_id,
             "tenantId": self._session.tenant_id,
             "from": self._session.phone_number,
-            "text": user_text,
+            "text": _with_language_hint(user_text, language),
             "language": language,
         }
         logger.info(
             f"[Veloxiam] → POST session={self._session.id} call_id={self._session.call_id} "
-            f"bot={self._session.bot_id} lang={language} text={user_text!r}"
+            f"bot={self._session.bot_id} lang={language} text={payload['text']!r}"
         )
         t0 = time.perf_counter()
         resp = await self._http.post(
