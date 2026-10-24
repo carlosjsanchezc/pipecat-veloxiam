@@ -622,13 +622,13 @@ class NestJSAgentProcessor(FrameProcessor):
             timeout=20.0,
         )
         req_ms = (time.perf_counter() - t0) * 1000
+        logger.info(
+            f"[Veloxiam] ← HTTP {resp.status_code} en {req_ms:.0f}ms "
+            f"session={self._session.id} body={resp.text[:4000]}"
+        )
         resp.raise_for_status()
         data = resp.json()
         reply, action, meta, audio_url = _parse_veloxiam_body(data)
-        logger.debug(
-            f"[Veloxiam] HTTP {resp.status_code} body recibido en {req_ms:.0f}ms — "
-            f"session={self._session.id} action={action}"
-        )
         return reply, action, meta, audio_url, resp.status_code, _veloxiam_language(data)
 
     async def _cancel_pending(self):
